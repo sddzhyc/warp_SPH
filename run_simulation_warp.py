@@ -5,9 +5,11 @@ import warp as wp
 import taichi as ti 
 
 from sph_diff_warp import SimSPH
-from particle_system_np import ParticleSystem
+# from particle_system_np import ParticleSystem
+from particle_system import ParticleSystem
 from config_builder import SimConfig
 
+ti.init(arch=ti.gpu, device_memory_fraction=0.5)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -21,7 +23,7 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_frames", type=int, default=100, help="Total number of frames.")
+    parser.add_argument("--num_frames", type=int, default=400, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     args = parser.parse_args()
 

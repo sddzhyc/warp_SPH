@@ -33,8 +33,8 @@ import numpy as np
 import os
 
 import warp as wp
-import warp.render
-from particle_system_np import ParticleSystem
+from particle_system import ParticleSystem
+# from particle_system_np import ParticleSystem
 
 # import partio
 
@@ -253,6 +253,7 @@ def initialize_particles(
     tid = wp.tid()
 
     # grid size
+    # particle_diameter = 4 * smoothing_length
     nr_x = wp.int32(width / 4.0 / smoothing_length)
     nr_y = wp.int32(height / smoothing_length)
     nr_z = wp.int32(length / 4.0 / smoothing_length)
@@ -272,11 +273,33 @@ def initialize_particles(
 
 
 class SimSPH:
-    def move_data_to_warp(self,):
+    def from_ti_to_warp(self,):
+            # use container values
+            self.n = int(self.ps.particle_num.to_numpy())
+            # allocate arrays and initialize
+            self.x = wp.empty(self.n, dtype=wp.vec3, requires_grad=True)
+            self.v = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
+            # self.rho = wp.zeros(self.n, dtype=float, requires_grad=True)
+            self.a = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
+            #TODO: transfer other arrays such as material properties
+            px = self.ps.x.to_numpy()[: self.n].astype(np.float32)
+            # pv = self.ps.v.to_numpy()[: self.n].astype(np.float32)
+            prho = self.ps.density.to_numpy()[: self.n].astype(np.float32)
+            self.x = wp.array(px, dtype=wp.vec3)
+            # self.v = wp.array(pv, dtype=wp.vec3)
+            self.rho = wp.array(prho, dtype=float)
+            print(f"n: {self.n}, x shape: {self.x.shape}, rho[1] = {prho[1]}")
+            
+            self.material = wp.array(self.ps.material.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
+            self.is_dynamic = wp.array(self.ps.is_dynamic.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
+
+            grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
+            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
+
+
+    def move_np_to_warp(self,):
             # use container values
             self.n = int(self.ps.particle_num)
-            if hasattr(self.ps, 'dh') and self.ps.dh is not None:
-                self.smoothing_length = float(self.ps.dh)
             # convert container numpy arrays (up to self.n) to Warp arrays
             # ensure shapes and types
             px = self.ps.x[: self.n].astype(np.float32)
@@ -287,14 +310,19 @@ class SimSPH:
             self.v = wp.array(pv, dtype=wp.vec3)
             self.rho = wp.array(prho, dtype=float)
             self.a = wp.array(np.zeros((self.n, 3), dtype=np.float32), dtype=wp.vec3)
-            print(f"Using container with {self.n} particles, dh={self.smoothing_length}")
             print(f"x shape: {self.x.shape}")
 
             grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
     def initialize(self, ps):
-        ps.initialize_particle_system()
+
+        # wp.launch(
+        #         kernel=initialize_particles,
+        #         dim=self.n,
+        #         inputs=[self.x, self.smoothing_length, self.width, self.height, self.length],
+        #     )
+        # ps.initialize_particle_system()
         for r_obj_id in ps.object_id_rigid_body:
             self.compute_rigid_rest_cm(r_obj_id)
         # ps.initialize_rigid_info()
@@ -318,20 +346,20 @@ class SimSPH:
         fps = 60
         self.frame_dt = 1.0 / fps
         self.sim_time = 0.0
-
-        # default simulation params
+        # get simulation params from config
         if (config != None):
-            self.smoothing_length = config.get_cfg("particleRadius")     # 0.8
+            self.particle_radius = config.get_cfg("particleRadius")
+            self.smoothing_length = 2.1 * self.particle_radius     # 0.8
             self.width = config.get_cfg("domainEnd")[1] # 80.0
             self.height = config.get_cfg("domainEnd")[2] # 80.0
             self.length = config.get_cfg("domainEnd")[0] # 80.0
-            self.isotropic_exp = 20
+            self.isotropic_exp = config.get_cfg("stiffness") # 20
             self.base_density = config.get_cfg("density0")   # 1.0
             self.particle_mass = 0.01 * self.smoothing_length**3
             self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
             self.dynamic_visc = 0.025
             self.damping_coef = -0.95
-            self.gravity = -0.1
+            self.gravity = config.get_cfg("gravitation")[1]  # -0.1
         else:
             self.smoothing_length = 0.8
             self.width = 80.0
@@ -356,18 +384,17 @@ class SimSPH:
         )
         self.sim_step_to_frame_ratio = int(32 / self.smoothing_length)
         if self.ps is None:
-
             # original initialization
-            # self.n = int(
-            #     self.height * (self.width / 4.0) * (self.height / 4.0) / (self.smoothing_length**3)
-            # )
-            self.n = 10000
+            self.n = int(
+                self.height * (self.width / 4.0) * (self.height / 4.0) / (self.smoothing_length**3)
+            )
+            # self.n = 10000
             # allocate arrays and initialize
             self.x = wp.empty(self.n, dtype=wp.vec3, requires_grad=True)
             self.v = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
             self.rho = wp.zeros(self.n, dtype=float, requires_grad=True)
             self.a = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
-
+            print(f"Using demo init with {self.n} particles, dh={self.smoothing_length}")
             wp.launch(
                 kernel=initialize_particles,
                 dim=self.n,
@@ -378,7 +405,15 @@ class SimSPH:
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
         else:
             self.initialize(container)
-            self.move_data_to_warp()
+            self.from_ti_to_warp()
+            grid_size = int(self.height / (4.0 * self.smoothing_length))
+            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
+        
+                # Material
+        
+        # Used for fluid-solid distinction
+        self.material_solid = 0
+        self.material_fluid = 1
         # renderer
         # self.renderer = None
         # if stage_path:
@@ -634,7 +669,10 @@ class SimSPH:
 
             c.particle_rest_volumes[i] = rest_vol
             c.particle_masses[i] = rest_vol * float(densities[i])
-
+    
+    @wp.func
+    def is_dynamic_rigid_body(self, p):
+        return self.material[p] == self.material_solid and self.is_dynamic[p]
     # -----------------------------------------------------------------------------------
 
 
