@@ -4,7 +4,7 @@ import warp as wp
 
 import taichi as ti 
 
-from sph_diff_warp import SimSPH
+from SimSPH import SimSPH
 # from particle_system_np import ParticleSystem
 from particle_system import ParticleSystem
 from config_builder import SimConfig

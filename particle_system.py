@@ -34,7 +34,7 @@ class ParticleSystem:
 
         self.particle_diameter = 2 * self.particle_radius
         self.support_radius = self.particle_radius * 4.0  # support radius
-        self.m_V0 = 0.8 * self.particle_diameter ** self.dim
+        self.m_V0 = 0.8 * self.particle_diameter ** self.dim #TODO:为什么是0.8?
 
         self.particle_num = ti.field(int, shape=())
 
