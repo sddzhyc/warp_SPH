@@ -1,4 +1,5 @@
 from particle_system import ParticleSystem
+from rigid_fluid_coupling import MaterialMarks, compute_moving_boundary_volume, compute_static_boundary_volume
 from sph_diff_warp import *
 
 import taichi as ti 
@@ -49,22 +50,28 @@ class SimSPH:
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
     def initialize(self, ps):
-
-        # wp.launch(
-        #         kernel=initialize_particles,
-        #         dim=self.n,
-        #         inputs=[self.x, self.smoothing_length, self.width, self.height, self.length],
-        #     )
+        self.m_V = wp.array(np.full(self.n, self.m_V0, dtype=np.float32), dtype=wp.float32)
+        
         # ps.initialize_particle_system()
-        for r_obj_id in ps.object_id_rigid_body:
-            self.compute_rigid_rest_cm(r_obj_id)
-        # ps.initialize_rigid_info()
-        for r_obj_id in ps.object_id_rigid_body:
-            self.compute_rigid_mass_info(r_obj_id)
-        # solver.compute_static_boundary_volume()
-        # solver.compute_moving_boundary_volume()
-        # self.compute_static_boundary_volume_numpy()
-        # self.compute_moving_boundary_volume_numpy()
+        # for r_obj_id in ps.object_id_rigid_body:
+        #     self.compute_rigid_rest_cm(r_obj_id)
+        
+        # for r_obj_id in ps.object_id_rigid_body:
+        #     self.compute_rigid_mass_info(r_obj_id)
+        
+        wp.launch(
+            kernel=compute_static_boundary_volume,
+            dim=self.n,
+            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization, self.smoothing_length,
+                    self.materialMarks],
+        )
+        wp.launch(
+            kernel=compute_moving_boundary_volume,
+            dim=self.n,
+            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization, self.smoothing_length,
+                    self.materialMarks],
+        )
+
 
     def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd"):
         """
@@ -139,8 +146,8 @@ class SimSPH:
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
         else:
-            self.initialize(container)
             self.from_ti_to_warp()
+            self.initialize(container)
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
@@ -184,29 +191,15 @@ class SimSPH:
                 mass = self.ps.m_V0 * self.ps.density[p_i]
                 cm += mass * self.ps.x[p_i]
                 sum_m += mass
+
+        if sum_m == 0.0:
+            return cm
+
         cm /= sum_m
         return cm
 
     def compute_rigid_rest_cm(self, object_id: int):
         self.ps.rigid_rest_cm[object_id] = self.compute_com(object_id)
-
-
-    #@ti.kernel  #TODO:待内核化
-    def compute_rigid_mass_info(self, object_id: int):
-        sum_m = 0.0
-        sum_inertia = np.zeros((3, 3), dtype=np.float32)
-        n = int(self.ps.particle_num)
-        for p_i in range(n):
-            if self.ps.object_id[p_i] == object_id:
-                mass = self.ps.m_V0 * self.ps.density[p_i]
-                sum_m += mass
-                r = self.ps.x[p_i] - self.ps.rigid_x[object_id]
-                sum_inertia += mass * (r.dot(r) * np.identity(3, dtype=np.float32) - np.outer(r, r))
-        self.ps.rigid_mass[object_id] = sum_m
-        self.ps.rigid_inertia0[object_id] = sum_inertia
-        self.ps.rigid_inertia[object_id] = sum_inertia
-        self.ps.rigid_inv_mass[object_id] = 1.0 / sum_m
-        self.ps.rigid_inv_inertia[object_id] = np.linalg.inv(sum_inertia)
 
     def step(self, t):
         self.time_step = t
@@ -360,49 +353,6 @@ class SimSPH:
 
             c.particle_rest_volumes[i] = rest_vol
             # update mass = rest_vol * density
-            c.particle_masses[i] = rest_vol * float(densities[i])
-
-    def compute_moving_boundary_volume_numpy(self):
-        """Compute boundary/rest volumes for dynamic rigid particles using numpy on container.
-
-        Similar assumptions to compute_static_boundary_volume_numpy.
-        """
-        if self.ps is None:
-            raise RuntimeError("No container provided to compute_moving_boundary_volume_numpy")
-
-        c = self.ps
-        n = int(c.particle_num)
-        if n == 0:
-            return
-
-        pos = c.particle_positions[:n].astype(np.float64)
-        materials = c.particle_materials[:n]
-        is_dyn = c.particle_is_dynamic[:n]
-        densities = c.particle_densities[:n]
-
-        mat_rigid = c.material_rigid
-        h = getattr(c, "dh", self.smoothing_length)
-        dim = pos.shape[1]
-
-        delta0 = float(self._cubic_kernel_numpy(0.0, h, dim=dim))
-
-        mask_dyn = (materials == mat_rigid) & (is_dyn == 1)
-        indices = np.nonzero(mask_dyn)[0]
-        for i in indices:
-            diffs = pos - pos[i : i + 1]
-            dists = np.linalg.norm(diffs, axis=1)
-            neighbor_mask = (dists < h) & (materials == mat_rigid) & (np.arange(n) != i)
-            if np.any(neighbor_mask):
-                delta = delta0 + np.sum(self._cubic_kernel_numpy(dists[neighbor_mask], h, dim=dim))
-            else:
-                delta = delta0
-
-            if delta <= 1e-12:
-                rest_vol = float(getattr(c, "V0", 1e-6))
-            else:
-                rest_vol = 1.0 / delta * 3.0
-
-            c.particle_rest_volumes[i] = rest_vol
             c.particle_masses[i] = rest_vol * float(densities[i])
 
 if __name__ == "__main__":

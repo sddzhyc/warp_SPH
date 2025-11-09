@@ -28,33 +28,11 @@
 #
 ###########################################################################
 import warp as wp
+
+from rigid_fluid_coupling import MaterialMarks, MaterialType
 # from particle_system_np import ParticleSystem
-
+from kernel_func import *
 # import partio
-
-
-@wp.func
-def square(x: float):
-    return x * x
-
-
-@wp.func
-def cube(x: float):
-    return x * x * x
-
-
-@wp.func
-def fifth(x: float):
-    return x * x * x * x * x
-
-
-@wp.func
-def density_kernel(xyz: wp.vec3, smoothing_length: float):
-    # calculate distance
-    distance = wp.dot(xyz, xyz)
-
-    return wp.max(cube(square(smoothing_length) - distance), 0.0)
-
 
 @wp.func
 def diff_pressure_kernel(
@@ -87,15 +65,6 @@ def diff_viscous_kernel(xyz: wp.vec3, v: wp.vec3, neighbor_v: wp.vec3, neighbor_
     else:
         return wp.vec3()
 
-# Used for fluid-solid distinction
-MATERIAL_SOLID = 0
-MATERIAL_FLUID = 1
-
-@wp.struct
-class MaterialMarks():
-    # store material id per particle (int) and dynamic flag (int)
-    material: wp.array(dtype=int)
-    is_dynamic: wp.array(dtype=int)
 
 @wp.kernel
 def compute_density(
@@ -120,22 +89,22 @@ def compute_density(
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
-    if mtr.material[i] == MATERIAL_FLUID:
+    if mtr.material[i] == MaterialType.FLUID:
         # loop through neighbors to compute density
         for index in neighbors:
-            if mtr.material[index] == MATERIAL_FLUID:
+            if mtr.material[index] == MaterialType.FLUID:
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
                 rho += density_kernel(distance, smoothing_length)
-            elif is_dynamic_rigid_body(mtr, index):
+            elif mtr.material[index] == MaterialType.SOLID:
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
                 rho += density_kernel(distance, smoothing_length)
         # add external potential
         particle_rho[i] = density_normalization * rho
-    elif mtr.material[i] == MATERIAL_SOLID:
+    elif mtr.material[i] == MaterialType.SOLID:
         pass
 
 @wp.kernel
@@ -171,7 +140,7 @@ def get_acceleration(
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
-    if mtr.material[i] == MATERIAL_FLUID:
+    if mtr.material[i] == MaterialType.FLUID:
         # loop through neighbors to compute acceleration
         for index in neighbors:
             if index != i:
@@ -283,7 +252,3 @@ def initialize_particles(
 
     # set position
     particle_x[tid] = pos
-
-@wp.func
-def is_dynamic_rigid_body(mtr: MaterialMarks, idx: int) -> bool:
-    return mtr.material[idx] == MATERIAL_SOLID and mtr.is_dynamic[idx] == 1
