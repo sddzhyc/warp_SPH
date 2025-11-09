@@ -93,6 +93,15 @@ def diff_viscous_kernel(xyz: wp.vec3, v: wp.vec3, neighbor_v: wp.vec3, neighbor_
     else:
         return wp.vec3()
 
+# Used for fluid-solid distinction
+MATERIAL_SOLID = 0
+MATERIAL_FLUID = 1
+
+@wp.struct
+class MaterialMarks():
+    # store material id per particle (int) and dynamic flag (int)
+    material: wp.array(dtype=int)
+    is_dynamic: wp.array(dtype=int)
 
 @wp.kernel
 def compute_density(
@@ -101,6 +110,7 @@ def compute_density(
     particle_rho: wp.array(dtype=float),
     density_normalization: float,
     smoothing_length: float,
+    mtr : MaterialMarks
 ):
     tid = wp.tid()
 
@@ -116,16 +126,17 @@ def compute_density(
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
-    # loop through neighbors to compute density
-    for index in neighbors:
-        # compute distance
-        distance = x - particle_x[index]
+    if mtr.material[i] == MATERIAL_FLUID:
+        # loop through neighbors to compute density
+        for index in neighbors:
+            # compute distance
+            distance = x - particle_x[index]
 
-        # compute kernel derivative
-        rho += density_kernel(distance, smoothing_length)
+            # compute kernel derivative
+            rho += density_kernel(distance, smoothing_length)
 
-    # add external potential
-    particle_rho[i] = density_normalization * rho
+        # add external potential
+        particle_rho[i] = density_normalization * rho
 
 @wp.kernel
 def get_acceleration(
@@ -140,6 +151,7 @@ def get_acceleration(
     pressure_normalization: float,
     viscous_normalization: float,
     smoothing_length: float,
+    mtr : MaterialMarks
 ):
     tid = wp.tid()
 
@@ -159,29 +171,29 @@ def get_acceleration(
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
-    # loop through neighbors to compute acceleration
-    for index in neighbors:
-        if index != i:
-            # get neighbor velocity
-            neighbor_v = particle_v[index]
+    if mtr.material[i] == MATERIAL_FLUID:
+        # loop through neighbors to compute acceleration
+        for index in neighbors:
+            if index != i:
+                # get neighbor velocity
+                neighbor_v = particle_v[index]
 
-            # get neighbor density and pressures
-            neighbor_rho = particle_rho[index]
-            neighbor_pressure = isotropic_exp * (neighbor_rho - base_density)
+                # get neighbor density and pressures
+                neighbor_rho = particle_rho[index]
+                neighbor_pressure = isotropic_exp * (neighbor_rho - base_density)
 
-            # compute relative position
-            relative_position = particle_x[index] - x
+                # compute relative position
+                relative_position = particle_x[index] - x
 
-            # calculate pressure force
-            pressure_force += diff_pressure_kernel(
-                relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
-            )
+                # calculate pressure force
+                pressure_force += diff_pressure_kernel(
+                    relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
+                )
+                # compute kernel derivative
+                viscous_force += diff_viscous_kernel(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
 
-            # compute kernel derivative
-            viscous_force += diff_viscous_kernel(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
-
-    # sum all forces
-    force = pressure_normalization * pressure_force + viscous_normalization * viscous_force
+        # sum all forces
+        force = pressure_normalization * pressure_force + viscous_normalization * viscous_force
 
     # add external potential
     particle_a[i] = force / rho + wp.vec3(0.0, gravity, 0.0)
@@ -195,6 +207,7 @@ def apply_bounds(
     width: float,
     height: float,
     length: float,
+    mtr : MaterialMarks
 ):
     tid = wp.tid()
 
@@ -290,8 +303,9 @@ class SimSPH:
             self.rho = wp.array(prho, dtype=float)
             print(f"n: {self.n}, x shape: {self.x.shape}, rho[1] = {prho[1]}")
             
-            self.material = wp.array(self.ps.material.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
-            self.is_dynamic = wp.array(self.ps.is_dynamic.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
+            self.materialMarks = MaterialMarks()
+            self.materialMarks.material = wp.array(self.ps.material.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
+            self.materialMarks.is_dynamic = wp.array(self.ps.is_dynamic.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
 
             grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
@@ -411,9 +425,6 @@ class SimSPH:
         
                 # Material
         
-        # Used for fluid-solid distinction
-        self.material_solid = 0
-        self.material_fluid = 1
         # renderer
         # self.renderer = None
         # if stage_path:
@@ -489,7 +500,8 @@ class SimSPH:
                     wp.launch(
                         kernel=compute_density,
                         dim=self.n,
-                        inputs=[self.grid.id, self.x, self.rho, self.density_normalization, self.smoothing_length],
+                        inputs=[self.grid.id, self.x, self.rho, self.density_normalization, self.smoothing_length,
+                                self.materialMarks],
                     )
 
                     # get new acceleration
@@ -508,6 +520,7 @@ class SimSPH:
                             self.pressure_normalization,
                             self.viscous_normalization,
                             self.smoothing_length,
+                            self.materialMarks,
                         ],
                     )
 
@@ -515,7 +528,8 @@ class SimSPH:
                     wp.launch(
                         kernel=apply_bounds,
                         dim=self.n,
-                        inputs=[self.x, self.v, self.damping_coef, self.width, self.height, self.length],
+                        inputs=[self.x, self.v, self.damping_coef, self.width, self.height, self.length,
+                                self.materialMarks],
                     )
 
                     # kick
@@ -669,11 +683,10 @@ class SimSPH:
 
             c.particle_rest_volumes[i] = rest_vol
             c.particle_masses[i] = rest_vol * float(densities[i])
-    
-    @wp.func
-    def is_dynamic_rigid_body(self, p):
-        return self.material[p] == self.material_solid and self.is_dynamic[p]
-    # -----------------------------------------------------------------------------------
+  
+@wp.func
+def is_dynamic_rigid_body(material_arr: wp.array(dtype=int), is_dynamic_arr: wp.array(dtype=int), idx: int) -> int:
+    return material_arr[idx] == MATERIAL_SOLID and is_dynamic_arr[idx] == 1
 
 
 if __name__ == "__main__":
