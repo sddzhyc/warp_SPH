@@ -241,6 +241,13 @@ class ParticleSystem:
                                is_dynamic * np.ones(num_particles_obj, dtype=np.int32), # is_dynamic
                                np.stack([color for _ in range(num_particles_obj)])) # color
 
+        # some stntance after init needed to run
+        for r_obj_id in self.object_id_rigid_body:
+            self.compute_rigid_rest_cm(r_obj_id)
+        self.initialize_rigid_info()
+        for r_obj_id in self.object_id_rigid_body:
+            self.compute_rigid_mass_info(r_obj_id)
+        self.print_rigid_info()
 
     @ti.func
     def add_particle(self, p, obj_id, x, v, density, pressure, material, is_dynamic, color):
@@ -515,7 +522,49 @@ class ParticleSystem:
         density_arr = np.full_like(np.zeros(num_new_particles, dtype=np.float32), density if density is not None else 1000.)
         pressure_arr = np.full_like(np.zeros(num_new_particles, dtype=np.float32), pressure if pressure is not None else 0.)
         self.add_particles(object_id, num_new_particles, new_positions, velocity_arr, density_arr, pressure_arr, material_arr, is_dynamic_arr, color_arr)
+    
+    # move here from sph_base.py 
+    @ti.kernel
+    def compute_rigid_mass_info(self, object_id: int):
+        sum_m = 0.0
+        sum_inertia = ti.Matrix([[0, 0, 0], [0, 0, 0], [0, 0, 0]], dt=float)
+        for p_i in self.x:
+            if self.object_id[p_i] == object_id:
+                mass = self.m_V0 * self.density[p_i]
+                sum_m += mass
+                r = self.x[p_i] - self.rigid_x[object_id]
+                sum_inertia += mass * (r.dot(r) * ti.Matrix.identity(ti.f32, 3) - r.outer_product(r))
+        self.rigid_mass[object_id] = sum_m
+        self.rigid_inertia0[object_id] = sum_inertia
+        self.rigid_inertia[object_id] = sum_inertia
+        self.rigid_inv_mass[object_id] = 1.0 / sum_m
+        self.rigid_inv_inertia[object_id] = sum_inertia.inverse()
 
+    @ti.func
+    def compute_com(self, object_id):
+        sum_m = 0.0
+        cm = ti.Vector([0.0, 0.0, 0.0])
+        for p_i in range(self.particle_num[None]):
+            if self.object_id[p_i] == object_id:
+                mass = self.m_V0 * self.density[p_i]
+                cm += mass * self.x[p_i]
+                sum_m += mass
+        cm /= sum_m
+        return cm
+    @ti.kernel
+    def compute_rigid_rest_cm(self, object_id: int):
+        self.rigid_rest_cm[object_id] = self.compute_com(object_id)
+
+
+    @ti.kernel
+    def initialize_rigid_info(self):
+        # call in initialization after compute_rigid_rest_cm
+        for r_obj_id in self.rigid_x:
+            # velocities and angular velocities have already been initialized in particle system
+            self.rigid_x[r_obj_id] = self.rigid_rest_cm[r_obj_id]
+            self.rigid_quaternion[r_obj_id] = ti.Vector([1.0, 0.0, 0.0, 0.0])
+            self.rigid_force[r_obj_id].fill(0.0)
+            self.rigid_torque[r_obj_id].fill(0.0)
 
     # add for debug
     def print_rigid_info(self):

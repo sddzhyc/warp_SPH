@@ -1,5 +1,5 @@
 from particle_system import ParticleSystem
-from rigid_fluid_coupling import MaterialMarks, compute_moving_boundary_volume, compute_static_boundary_volume
+from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
 from sph_diff_warp import *
 
 import taichi as ti 
@@ -7,7 +7,7 @@ import numpy as np
 import warp as wp
 
 class SimSPH:
-    def from_ti_to_warp(self,):
+    def ti_to_warp(self,):
             # use container values
             self.n = int(self.ps.particle_num.to_numpy())
             # allocate arrays and initialize
@@ -27,37 +27,44 @@ class SimSPH:
             self.materialMarks = MaterialMarks()
             self.materialMarks.material = wp.array(self.ps.material.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
             self.materialMarks.is_dynamic = wp.array(self.ps.is_dynamic.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32)
-
+            # rigid related info
+            self.num_rigid_bodies = self.ps.num_rigid_bodies
+            self.num_objects = self.ps.num_objects
+            self.dim = self.ps.dim
+            
+            self.object_id = wp.array(self.ps.object_id.to_numpy()[: self.n].astype(np.int32), dtype=wp.int32) # Originally particle_max_num
+            px_0 = self.ps.x_0.to_numpy()[: self.n].astype(np.float32)
+            self.x_0 =  wp.array(px_0, dtype=wp.vec3)
+            self.rbs = RigidBodies()
+            # map Taichi fields into Warp RigidBodies arrays
+            n_obj = int(self.num_objects)
+            self.rbs.rigid_rest_cm = wp.array(self.ps.rigid_rest_cm.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_v0      = wp.array(self.ps.rigid_v0.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            # omegas (3-components)
+            self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
+            # quaternions (shape: n_obj x 4) -> Warp quat
+            q_np = self.ps.rigid_quaternion.to_numpy()[:n_obj].astype(np.float32)
+            self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+            # scalar masses
+            self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:n_obj].astype(np.float32), dtype=float)
+            self.rbs.rigid_inv_mass = wp.array(self.ps.rigid_inv_mass.to_numpy()[:n_obj].astype(np.float32), dtype=float)
+            # inertia matrices (n_obj x 3 x 3)
+            self.rbs.rigid_inertia     = wp.array(self.ps.rigid_inertia.to_numpy()[:n_obj].astype(np.float32), dtype=wp.mat33)
+            self.rbs.rigid_inertia0    = wp.array(self.ps.rigid_inertia0.to_numpy()[:n_obj].astype(np.float32), dtype=wp.mat33)
+            self.rbs.rigid_inv_inertia = wp.array(self.ps.rigid_inv_inertia.to_numpy()[:n_obj].astype(np.float32), dtype=wp.mat33)
+            self.print_rigid_info()
             grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
-
-    def move_np_to_warp(self,):
-            # use container values
-            self.n = int(self.ps.particle_num)
-            # convert container numpy arrays (up to self.n) to Warp arrays
-            # ensure shapes and types
-            px = self.ps.x[: self.n].astype(np.float32)
-            pv = self.ps.v[: self.n].astype(np.float32)
-            prho = self.ps.density[: self.n].astype(np.float32)
-
-            self.x = wp.array(px, dtype=wp.vec3)
-            self.v = wp.array(pv, dtype=wp.vec3)
-            self.rho = wp.array(prho, dtype=float)
-            self.a = wp.array(np.zeros((self.n, 3), dtype=np.float32), dtype=wp.vec3)
-            print(f"x shape: {self.x.shape}")
-
-            grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
-            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
-
+    
     def initialize(self, ps):
         self.m_V = wp.array(np.full(self.n, self.m_V0, dtype=np.float32), dtype=wp.float32)
         
         # ps.initialize_particle_system()
-        # for r_obj_id in ps.object_id_rigid_body:
-        #     self.compute_rigid_rest_cm(r_obj_id)
-        
-        # for r_obj_id in ps.object_id_rigid_body:
-        #     self.compute_rigid_mass_info(r_obj_id)
         
         wp.launch(
             kernel=compute_static_boundary_volume,
@@ -121,6 +128,7 @@ class SimSPH:
             64.0 * np.pi * self.smoothing_length**9
         )
         self.pressure_normalization = -(45.0 * self.particle_mass) / (np.pi * self.smoothing_length**6)
+        self.pressure_normalization_no_mass = -45.0 / (np.pi * self.smoothing_length**6)
         self.viscous_normalization = (45.0 * self.dynamic_visc * self.particle_mass) / (
             np.pi * self.smoothing_length**6
         )
@@ -146,12 +154,30 @@ class SimSPH:
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
         else:
-            self.from_ti_to_warp()
+            self.ti_to_warp()
             self.initialize(container)
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
-                # Material
+            # self.rbs = RigidBodies()
+            # self.rbs.rigid_rest_cm   = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_x         = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_v0        = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_v         = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_force     = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_torque    = wp.zeros(n_obj, dtype=wp.vec3)
+
+            # self.rbs.rigid_omega     = wp.zeros(n_obj, dtype=wp.vec3)
+            # self.rbs.rigid_omega0    = wp.zeros(n_obj, dtype=wp.vec3)
+
+            # self.rbs.rigid_mass      = wp.zeros(n_obj, dtype=float)
+            # self.rbs.rigid_inv_mass  = wp.zeros(n_obj, dtype=float)
+
+            # self.rbs.rigid_quaternion = wp.zeros(n_obj, dtype=wp.quat)
+
+            # self.rbs.rigid_inertia       = wp.zeros(n_obj, dtype=wp.mat33)
+            # self.rbs.rigid_inertia0      = wp.zeros(n_obj, dtype=wp.mat33)
+            # self.rbs.rigid_inv_inertia   = wp.zeros(n_obj, dtype=wp.mat33)
 
         # renderer
         # self.renderer = None
@@ -183,24 +209,6 @@ class SimSPH:
         #partio.write("circle.bgeo",particleSet,True) # write compressed
         #partio.write("circle.bgeo.gz",particleSet) # write compressed 
     """
-    def compute_com(self, object_id):
-        sum_m = 0.0
-        cm = np.array([0.0, 0.0, 0.0])
-        for p_i in range(self.ps.particle_num):
-            if self.ps.object_id[p_i] == object_id:
-                mass = self.ps.m_V0 * self.ps.density[p_i]
-                cm += mass * self.ps.x[p_i]
-                sum_m += mass
-
-        if sum_m == 0.0:
-            return cm
-
-        cm /= sum_m
-        return cm
-
-    def compute_rigid_rest_cm(self, object_id: int):
-        self.ps.rigid_rest_cm[object_id] = self.compute_com(object_id)
-
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step"):
@@ -235,6 +243,9 @@ class SimSPH:
                             self.viscous_normalization,
                             self.smoothing_length,
                             self.materialMarks,
+                            self.m_V,
+                            self.object_id,
+                            self.rbs
                         ],
                     )
 
@@ -251,6 +262,21 @@ class SimSPH:
 
                     # drift
                     wp.launch(kernel=drift, dim=self.n, inputs=[self.x, self.v, self.dt])
+
+                    g = wp.vec3(0.0, self.gravity, 0.0)
+
+                    wp.launch(kernel=solve_rigid_body, dim=self.num_objects, inputs=[self.rbs, g, self.dt])
+                    # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
+                    self.print_rigid_info()
+                    wp.launch(
+                        kernel=update_rigid_particle_info,
+                        dim=self.n,
+                        inputs=[self.x, self.v, self.x_0,
+                            self.object_id,
+                            self.materialMarks,
+                            self.rbs,
+                        ]
+                    )
 
             self.sim_time += self.frame_dt
 
@@ -301,59 +327,21 @@ class SimSPH:
             return float(res)
         return res
 
-    #TODO:待移植
-    def compute_static_boundary_volume_numpy(self):
-        """Compute boundary/rest volumes for static rigid particles using numpy on container.
+    def print_rigid_info(self):
+        if self.num_rigid_bodies > 0:
+            masses = self.rbs.rigid_mass.numpy()
+            pos = self.rbs.rigid_x.numpy()
+            vel = self.rbs.rigid_v.numpy()
+            omega = self.rbs.rigid_omega.numpy()
+            quat = self.rbs.rigid_quaternion.numpy()
+            rest_cm = self.rbs.rigid_rest_cm.numpy()
 
-        Writes results into `container.particle_rest_volumes` and `container.particle_masses`.
-        Assumptions: `self.container` is a BaseContainer-like object with host numpy arrays:
-          - particle_positions (N x dim)
-          - particle_materials (N,)
-          - particle_is_dynamic (N,)
-          - particle_densities (N,)
-          - particle_rest_volumes (N,)
-          - particle_masses (N,)
-          - V0 (scalar default volume)
-          - dh (support radius) or use self.smoothing_length
-        """
-        c = self.ps
-        n = int(c.particle_num)
-        if n == 0:
-            return
-
-        pos = c.particle_positions[:n].astype(np.float64)
-        materials = c.particle_materials[:n]
-        is_dyn = c.particle_is_dynamic[:n]
-        densities = c.particle_densities[:n]
-
-        mat_rigid = c.material_rigid
-        h = getattr(c, "dh", self.smoothing_length)
-        dim = pos.shape[1]
-
-        delta0 = float(self._cubic_kernel_numpy(0.0, h, dim=dim))
-
-        # iterate static rigid particles
-        mask_static = (materials == mat_rigid) & (is_dyn == 0)
-        indices = np.nonzero(mask_static)[0]
-        # for performance we vectorize per-particle but keep simple O(N^2) loop here
-        for i in indices:
-            # distances to all rigid particles
-            diffs = pos - pos[i : i + 1]
-            dists = np.linalg.norm(diffs, axis=1)
-            neighbor_mask = (dists < h) & (materials == mat_rigid) & (np.arange(n) != i)
-            if np.any(neighbor_mask):
-                delta = delta0 + np.sum(self._cubic_kernel_numpy(dists[neighbor_mask], h, dim=dim))
-            else:
-                delta = delta0
-
-            if delta <= 1e-12:
-                rest_vol = float(getattr(c, "V0", 1e-6))
-            else:
-                rest_vol = 1.0 / delta * 3.0
-
-            c.particle_rest_volumes[i] = rest_vol
-            # update mass = rest_vol * density
-            c.particle_masses[i] = rest_vol * float(densities[i])
+            print(f"[rbs] num={self.num_rigid_bodies}")
+            for i in range(self.num_objects):
+                print(
+                    f"  id={i} mass={masses[i]:.6f} pos={pos[i]} vel={vel[i]} "
+                    f"omega={omega[i]} quat={quat[i]} rest_cm={rest_cm[i]}"
+                )
 
 if __name__ == "__main__":
     import argparse
@@ -385,4 +373,3 @@ if __name__ == "__main__":
             writer.export_frame_ascii(cnt_ply, series_prefix.format(0))
             cnt_ply+=1
             # example.partio_export()
-    

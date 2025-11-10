@@ -29,7 +29,7 @@
 ###########################################################################
 import warp as wp
 
-from rigid_fluid_coupling import MaterialMarks, MaterialType
+from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, is_dynamic_rigid_body
 # from particle_system_np import ParticleSystem
 from kernel_func import *
 # import partio
@@ -41,7 +41,7 @@ def diff_pressure_kernel(
     # calculate distance
     distance = wp.sqrt(wp.dot(xyz, xyz))
 
-    if distance < smoothing_length:
+    if distance < smoothing_length: # 默认smoothing_length即支持半径？
         # calculate terms of kernel
         term_1 = -xyz / distance # 单位距离向量
         term_2 = (neighbor_pressure + pressure) / (2.0 * neighbor_rho)
@@ -120,7 +120,10 @@ def get_acceleration(
     pressure_normalization: float,
     viscous_normalization: float,
     smoothing_length: float,
-    mtr : MaterialMarks
+    mtr : MaterialMarks,
+    m_V: wp.array(dtype=float),
+    object_id: wp.array(dtype=wp.int32),
+    rbs :RigidBodies
 ):
     tid = wp.tid()
 
@@ -162,7 +165,7 @@ def get_acceleration(
                 viscous_force += diff_viscous_kernel(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
 
         # sum all forces
-        force = pressure_normalization * pressure_force + viscous_normalization * viscous_force
+        force = pressure_normalization_no_mass * pressure_force + viscous_normalization * viscous_force
 
     # add external potential
     particle_a[i] = force / rho + wp.vec3(0.0, gravity, 0.0)
