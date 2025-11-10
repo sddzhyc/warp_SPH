@@ -102,9 +102,10 @@ class SimSPH:
             self.length = config.get_cfg("domainEnd")[0] # 80.0
             self.isotropic_exp = config.get_cfg("stiffness") # 20
             self.base_density = config.get_cfg("density0")   # 1.0
-            self.m_V0 = self.ps.m_V0 #  0.8 * self.particle_diameter ** self.dim
-            # self.particle_mass = self.m_V0 * self.base_density
-            self.particle_mass = 0.01 * self.smoothing_length**3 #为什么是0.01?
+            # self.m_V0 = self.ps.m_V0 #  0.8 * self.particle_diameter ** self.dim
+            self.m_V0 = 0.01 * self.smoothing_length**3 # 修改为设定体积而非质量
+            # self.particle_mass = 0.01 * self.smoothing_length**3  # 为什么原example采用0.01?
+            self.particle_mass = self.m_V0 * self.base_density # 设置后粒子不稳定？
             self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
             self.dynamic_visc = 0.025
             self.damping_coef = -0.95
@@ -130,6 +131,9 @@ class SimSPH:
         self.pressure_normalization = -(45.0 * self.particle_mass) / (np.pi * self.smoothing_length**6)
         self.pressure_normalization_no_mass = -45.0 / (np.pi * self.smoothing_length**6)
         self.viscous_normalization = (45.0 * self.dynamic_visc * self.particle_mass) / (
+            np.pi * self.smoothing_length**6
+        )
+        self.viscous_normalization_no_mass = (45.0 * self.dynamic_visc) / (
             np.pi * self.smoothing_length**6
         )
         self.sim_step_to_frame_ratio = int(32 / self.smoothing_length)
@@ -239,8 +243,8 @@ class SimSPH:
                             self.isotropic_exp,
                             self.base_density,
                             self.gravity,
-                            self.pressure_normalization,
-                            self.viscous_normalization,
+                            self.pressure_normalization_no_mass,
+                            self.viscous_normalization_no_mass,
                             self.smoothing_length,
                             self.materialMarks,
                             self.m_V,
