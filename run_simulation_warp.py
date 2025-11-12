@@ -29,7 +29,8 @@ if __name__ == "__main__":
 
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
-    scene_name = scene_path.split("/")[-1].split(".")[0]
+    # Robust scene name extraction for Windows/Unix paths
+    scene_name = os.path.splitext(os.path.basename(scene_path))[0]
 
     # export settings
     output_frames = config.get_cfg("exportFrame")
@@ -50,7 +51,8 @@ if __name__ == "__main__":
 
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
-    series_prefix = "{}_output/particle_object_{}.ply".format(scene_name, "{}")
+    # Use zero-padded frame index in filename
+    series_prefix = f"{scene_name}_output/particle_object_{{:06d}}.ply"
     if output_frames:
         os.makedirs(f"{scene_name}_output_img", exist_ok=True)
     if output_ply:
@@ -73,14 +75,7 @@ if __name__ == "__main__":
             # example.render()
             if cnt % output_interval == 0:
                 if output_ply:
-                    obj_id = 0
-                    # Save particle positions to PLY for the specific object
-                    #obj_data = container.dump(obj_id=obj_id)
-                    np_pos = example.x.numpy()
-                    # print(container.object_collection)
-                    writer = ti.tools.PLYWriter(num_vertices=np_pos.shape[0])
-                    writer.add_vertex_pos(np_pos[:, 0], np_pos[:, 1], np_pos[:, 2])
-                    writer.export_frame_ascii(cnt_ply, series_prefix.format(0))
+                    example.export_ply(series_prefix, cnt_ply)
                 if output_obj:
                     for r_body_id in container.object_id_rigid_body:
                         with open(f"{scene_name}_output/obj_{r_body_id}_{cnt_ply:06}.obj", "w") as f:
@@ -93,11 +88,8 @@ if __name__ == "__main__":
             #if output_frames:
                 # if cnt % output_interval == 0:
                 #     window.write_image(f"{scene_name}_output_img/{cnt:06}.png")
-
-
         # if example.renderer:
         #     example.renderer.save()
-        radius = 0.002
     movement_speed = 0.02
     background_color = (0, 0, 0)  # 0xFFFFFF
     particle_color = (1, 1, 1)

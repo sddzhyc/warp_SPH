@@ -36,7 +36,7 @@ from kernel_func import *
 
 @wp.func
 def diff_pressure_kernel(
-    xyz: wp.vec3, pressure: float, neighbor_pressure: float,rho: float , neighbor_rho: float, smoothing_length: float
+    xyz: wp.vec3, pressure: float, neighbor_pressure: float, rho: float , neighbor_rho: float, smoothing_length: float
 ):
     # calculate distance
     distance = wp.sqrt(wp.dot(xyz, xyz))
@@ -71,9 +71,11 @@ def compute_density(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     particle_rho: wp.array(dtype=float),
-    density_normalization: float, # constant term in poly6 kernel multi mass of particle
+    density_normalization: float, # use density_normalization_with_rho
     smoothing_length: float,
-    mtr : MaterialMarks
+    mtr : MaterialMarks,
+    m_V: wp.array(dtype=float),
+    base_density: float
 ):
     tid = wp.tid()
 
@@ -96,14 +98,14 @@ def compute_density(
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
-                rho += density_kernel(distance, smoothing_length)
+                rho += m_V[index] * density_kernel(distance, smoothing_length)
             elif mtr.material[index] == MaterialType.SOLID:
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
-                rho += density_kernel(distance, smoothing_length)
+                rho += m_V[index] * density_kernel(distance, smoothing_length)
         # add external potential
-        particle_rho[i] = density_normalization * rho
+        particle_rho[i] = density_normalization * base_density * rho
     elif mtr.material[i] == MaterialType.SOLID:
         pass
 
@@ -161,26 +163,26 @@ def get_acceleration(
                     pressure_force += base_density * m_V[index] * diff_pressure_kernel(
                         relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
                     )
-                    # pressure_force += diff_pressure_kernel(
-                    #     relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
-                    # )
                     # compute kernel derivative
                     viscous_force += base_density * m_V[index] * diff_viscous_kernel(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
-                # elif mtr.material[index] == MaterialType.SOLID:
-                #     fp = base_density * m_V[index] * diff_pressure_kernel(
-                #         relative_position, pressure, neighbor_pressure, rho, rho, smoothing_length
-                #     )
-                #     pressure_force += fp
-                #     if  is_dynamic_rigid_body(mtr, index):
-                #         # keep particle-level acceleration update (existing behavior) 疑似shape matching的写法？
-                #         # TODO: 为什么多乘了一个self.density_0？
-                #         # self.ps.acceleration[p_j] += -f_p * self.density_0 / self.ps.density[p_j]
-                #         # also aggregate force/torque to the rigid body (Akinci2012 style)
-                #         r_id = object_id[index]
-                #         # convert contribution to a force compatible with DFSPH's convention
-                #         force = -fp * rho * m_V[i]
-                #         rbs.rigid_force[r_id] += force
-                #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
+                elif mtr.material[index] == MaterialType.SOLID:
+                    fp = base_density * m_V[index] * diff_pressure_kernel(
+                        relative_position, pressure, pressure, rho, base_density, smoothing_length
+                    )
+                    pressure_force += fp
+                    if  is_dynamic_rigid_body(mtr, index):
+                        # debug: print fp for a small subset to avoid flooding output
+                        # if fp != wp.vec3():
+                        #     wp.printf("fp=(%f, %f, %f), i=%d, neighbor=%d\n", fp[0], fp[1], fp[2], i, index)
+                        # keep particle-level acceleration update (existing behavior) 疑似shape matching的写法？
+                        # TODO: 为什么多乘了一个self.density_0？
+                        # self.ps.acceleration[p_j] += -f_p * self.density_0 / self.ps.density[p_j]
+                        # also aggregate force/torque to the rigid body (Akinci2012 style)
+                        r_id = object_id[index]
+                        # convert contribution to a force compatible with DFSPH's convention
+                        force = -fp * rho * m_V[i]
+                        rbs.rigid_force[r_id] += force
+                        rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
         # sum all forces
         force = pressure_normalization_no_mass * pressure_force + viscous_normalization * viscous_force

@@ -38,14 +38,14 @@ def is_dynamic_rigid_body(mtr: MaterialMarks, idx: int) -> bool:
     return mtr.material[idx] == MaterialType.SOLID and mtr.is_dynamic[idx] == 1
 @wp.func
 def is_static_rigid_body(mtr: MaterialMarks, idx: int) -> bool:
-    return mtr.material[idx] == MaterialType.SOLID and (not mtr.is_dynamic[idx])
+    return mtr.material[idx] == MaterialType.SOLID and (mtr.is_dynamic[idx] == 0)
 
 @wp.kernel
 def compute_static_boundary_volume(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     m_V : wp.array(dtype=wp.float32),
-    density_normalization: float, # constant term in poly6 kernel multi mass of particle
+    density_normalization_no_mass: float, # constant term in poly6 kernel multi mass of particle
     smoothing_length: float,
     mtr : MaterialMarks
 ):
@@ -56,25 +56,26 @@ def compute_static_boundary_volume(
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
         rho = float(0.0)
-        if mtr.material[i] == MaterialType.FLUID:
-            # loop through neighbors to compute density
-            for index in neighbors:
-                if mtr.material[index] == MaterialType.SOLID:
-                    # compute distance
-                    distance = x - particle_x[index]
-                    # compute kernel derivative, the cube term in poly6 kernel
-                    rho += density_kernel(distance, smoothing_length)
-            # add external potential
-            rho *= density_normalization
+        # loop through neighbors to compute density
+        for index in neighbors:
+            if mtr.material[index] == MaterialType.SOLID:
+                # compute distance
+                distance = x - particle_x[index]
+                # compute kernel derivative, the cube term in poly6 kernel
+                rho += density_kernel(distance, smoothing_length)
+        # add external potential
+        rho *= density_normalization_no_mass
+        if rho > 0.0:
             m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
-
+        else:
+            m_V[i] = 0.0
 
 @wp.kernel
 def compute_moving_boundary_volume(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     m_V : wp.array(dtype=wp.float32),
-    density_normalization: float, # constant term in poly6 kernel multi mass of particle
+    density_normalization_no_mass: float, # constant term in poly6 kernel multi mass of particle
     smoothing_length: float,
     mtr : MaterialMarks
 ):
@@ -85,18 +86,19 @@ def compute_moving_boundary_volume(
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
         rho = float(0.0)
-        if mtr.material[i] == MaterialType.FLUID:
             # loop through neighbors to compute density
-            for index in neighbors:
-                if mtr.material[index] == MaterialType.SOLID:
-                    # compute distance
-                    distance = x - particle_x[index]
-                    # compute kernel derivative, the cube term in poly6 kernel
-                    rho += density_kernel(distance, smoothing_length)
-            # add external potential
-            rho *= density_normalization
+        for index in neighbors:
+            if mtr.material[index] == MaterialType.SOLID:
+                # compute distance
+                distance = x - particle_x[index]
+                # compute kernel derivative, the cube term in poly6 kernel
+                rho += density_kernel(distance, smoothing_length)
+        # add external potential
+        rho *= density_normalization_no_mass
+        if rho > 0.0:
             m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
-
+        else:
+            m_V[i] = 0.0
 @wp.kernel
 def solve_rigid_body(
     bodies: RigidBodies,
@@ -142,11 +144,16 @@ def update_rigid_particle_info(
 ):
     tid = wp.tid()
 
-    if is_dynamic_rigid_body(mtr, tid) == 1:
+    # update dynamic rigid body particle transforms
+    if is_dynamic_rigid_body(mtr, tid):
         r = object_id[tid]
 
-        x_rel = particles_x0[tid] - bodies.rigid_rest_cm[r]
+        # rest-space relative position (assumes rest orientation is identity)
+        x_rel = particles_x0[tid] - bodies.rigid_rest_cm[r] #TODO: 旋转角度不正确的bug
         R = wp.quat_to_matrix(bodies.rigid_quaternion[r])
+        x_rel_world = R @ x_rel
         
-        particles_x[tid] = bodies.rigid_x[r] + R @ x_rel
+        # position and velocity must use the SAME world-space lever arm to avoid artifacts
+        particles_x[tid] = bodies.rigid_x[r] + x_rel_world
+        # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
         particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)

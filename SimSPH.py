@@ -2,9 +2,33 @@ from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
 from sph_diff_warp import *
 
-import taichi as ti 
 import numpy as np
 import warp as wp
+import os
+# optional dependency for flexible PLY export with custom attributes
+from plyfile import PlyData, PlyElement
+
+def export_ply_points(path: str, pos: np.ndarray, attrs: dict):
+    """Export point cloud to PLY with arbitrary per-vertex scalar attributes.
+
+    path: output .ply path
+    pos: (N,3) float32 numpy array
+    attrs: dict of {name: (N,) array-like} extra per-vertex scalars (e.g., rho, mV)
+    """
+    n = int(pos.shape[0])
+    dtype = [('x','f4'),('y','f4'),('z','f4')]
+    for name in attrs.keys():
+        dtype.append((str(name), 'f4'))
+
+    data = np.empty(n, dtype=dtype)
+    data['x'] = pos[:, 0].astype('f4')
+    data['y'] = pos[:, 1].astype('f4')
+    data['z'] = pos[:, 2].astype('f4')
+    for name, arr in attrs.items():
+        data[str(name)] = np.asarray(arr, dtype='f4')
+
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    PlyData([PlyElement.describe(data, 'vertex')], text=True).write(path)
 
 class SimSPH:
     def ti_to_warp(self,):
@@ -61,23 +85,26 @@ class SimSPH:
             grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
     
-    def initialize(self, ps):
+    def initialize(self):
         self.m_V = wp.array(np.full(self.n, self.m_V0, dtype=np.float32), dtype=wp.float32)
-        
+        print(f"Initialized particle volumes m_V0 = {self.m_V0}")
         # ps.initialize_particle_system()
         
         wp.launch(
             kernel=compute_static_boundary_volume,
             dim=self.n,
-            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization, self.smoothing_length,
+            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
                     self.materialMarks],
         )
         wp.launch(
             kernel=compute_moving_boundary_volume,
             dim=self.n,
-            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization, self.smoothing_length,
+            inputs=[self.grid.id, self.x, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
                     self.materialMarks],
         )
+        # 打印m_V
+        m_V_np = self.m_V.numpy()
+        print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
     def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd"):
@@ -96,12 +123,14 @@ class SimSPH:
         # get simulation params from config
         if (config != None):
             self.particle_radius = config.get_cfg("particleRadius")
+            # self.smoothing_length = self.particle_radius     # 0.8
             self.smoothing_length = 2.1 * self.particle_radius     # 0.8
             self.width = config.get_cfg("domainEnd")[1] # 80.0
             self.height = config.get_cfg("domainEnd")[2] # 80.0
             self.length = config.get_cfg("domainEnd")[0] # 80.0
             self.isotropic_exp = config.get_cfg("stiffness") # 20
             self.base_density = config.get_cfg("density0")   # 1.0
+            # self.base_density = 0.015667
             # self.m_V0 = self.ps.m_V0 #  0.8 * self.particle_diameter ** self.dim
             self.m_V0 = 0.01 * self.smoothing_length**3 # 修改为设定体积而非质量
             # self.particle_mass = 0.01 * self.smoothing_length**3  # 为什么原example采用0.01?
@@ -110,6 +139,13 @@ class SimSPH:
             self.dynamic_visc = 0.025
             self.damping_coef = -0.95
             self.gravity = config.get_cfg("gravitation")[1]  # -0.1
+            # 打印 m_V0、 base_density、particle_mass、smoothing_length
+            print("----------------------------------------------------------------")
+            print(
+                f"m_V0 = {self.m_V0}, base_density = {self.base_density}, "
+                f"particle_mass = {self.particle_mass}, smoothing_length = {self.smoothing_length}"
+            )
+            print("----------------------------------------------------------------")
         else:
             self.smoothing_length = 0.8
             self.width = 80.0
@@ -122,10 +158,13 @@ class SimSPH:
             self.dynamic_visc = 0.025
             self.damping_coef = -0.95
             self.gravity = -0.1
-
+        
         self.time_step = 0.0
         # recompute constants
         self.density_normalization = (315.0 * self.particle_mass) / (
+            64.0 * np.pi * self.smoothing_length**9
+        )
+        self.density_normalization_no_mass = 315.0 / (
             64.0 * np.pi * self.smoothing_length**9
         )
         self.pressure_normalization = -(45.0 * self.particle_mass) / (np.pi * self.smoothing_length**6)
@@ -157,9 +196,12 @@ class SimSPH:
 
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
+            # ensure volume array exists for export consistency
+            # self.m_V0 = getattr(self, 'm_V0', 0.01 * self.smoothing_length**3)
+            self.m_V = wp.array(np.full(self.n, self.m_V0, dtype=np.float32), dtype=wp.float32)
         else:
             self.ti_to_warp()
-            self.initialize(container)
+            self.initialize()
             grid_size = int(self.height / (4.0 * self.smoothing_length))
             self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
@@ -222,12 +264,18 @@ class SimSPH:
                     self.grid.build(self.x, self.smoothing_length)
 
                 with wp.ScopedTimer("forces", active=self.verbose):
+                    wp.launch(
+                        kernel=compute_moving_boundary_volume,
+                        dim=self.n,
+                        inputs=[self.grid.id, self.x, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
+                                self.materialMarks],
+                    )
                     # compute density of points
                     wp.launch(
                         kernel=compute_density,
                         dim=self.n,
-                        inputs=[self.grid.id, self.x, self.rho, self.density_normalization, self.smoothing_length,
-                                self.materialMarks],
+                        inputs=[self.grid.id, self.x, self.rho, self.density_normalization_no_mass, self.smoothing_length,
+                                self.materialMarks, self.m_V, self.base_density],
                     )
 
                     # get new acceleration
@@ -252,7 +300,7 @@ class SimSPH:
                             self.rbs
                         ],
                     )
-
+                    # self.print_rigid_info()
                     # apply bounds
                     wp.launch(
                         kernel=apply_bounds,
@@ -271,7 +319,6 @@ class SimSPH:
 
                     wp.launch(kernel=solve_rigid_body, dim=self.num_objects, inputs=[self.rbs, g, self.dt])
                     # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
-                    self.print_rigid_info()
                     wp.launch(
                         kernel=update_rigid_particle_info,
                         dim=self.n,
@@ -341,11 +388,26 @@ class SimSPH:
             rest_cm = self.rbs.rigid_rest_cm.numpy()
 
             print(f"[rbs] num={self.num_rigid_bodies}")
-            for i in range(self.num_objects):
+            for i in range(1, self.num_objects): # 跳过流体
                 print(
                     f"  id={i} mass={masses[i]:.6f} pos={pos[i]} vel={vel[i]} "
                     f"omega={omega[i]} quat={quat[i]} rest_cm={rest_cm[i]}"
                 )
+    
+    def export_ply(self, series_prefix, cnt_ply):
+        np_pos = self.x.numpy()
+        np_rho = self.rho.numpy()
+        # m_V: use computed per-particle if available, else fallback to constant m_V0
+        np_mV = self.m_V.numpy()
+        np_obj_id = self.object_id.numpy()
+        out_path = series_prefix.format(cnt_ply)
+        export_ply_points(out_path, np_pos.astype(np.float32), {
+            'rho': np_rho.astype(np.float32),
+            'mV': np_mV.astype(np.float32),
+            'object_id': np_obj_id.astype(np.float32),
+            'material': self.materialMarks.material.numpy().astype(np.int32),
+            'is_dynamic': self.materialMarks.is_dynamic.numpy().astype(np.int32),
+        })
 
 if __name__ == "__main__":
     import argparse
@@ -369,11 +431,6 @@ if __name__ == "__main__":
         for time_step in range(args.num_frames):
             # example.render()
             example.step(time_step)
-
-            np_pos = example.x.numpy()
-            # print(container.object_collection)
-            writer = ti.tools.PLYWriter(num_vertices=np_pos.shape[0])
-            writer.add_vertex_pos(np_pos[:, 0], np_pos[:, 1], np_pos[:, 2])
-            writer.export_frame_ascii(cnt_ply, series_prefix.format(0))
-            cnt_ply+=1
+            example.export_ply(series_prefix, cnt_ply)
+            cnt_ply += 1
             # example.partio_export()
