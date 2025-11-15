@@ -8,7 +8,8 @@
 		"density0": 1.0, 
 		"simulationMethod": 4,
 		"gravitation": [0.0, -9.8, 0.0],
-		"timeStepSize": 0.004,
+		"timeStepSize": 0.001,
+		"timeStepSize": 0.001,
 		"stiffness": 20,
 		"exponent": 7,
 		"boundaryHandlingMethod": 0,
@@ -21,13 +22,13 @@
 	"RigidBodies": [
 		{
             "objectId": 1,
-			"geometryFile": "./data/models/armadillo_small.obj",
-			"translation": [20, 28.0, 20],
+			"geometryFile": "./data/models/UnitBox.obj",
+			"translation": [30, 20.0, 20],
 			"rotationAxis": [1, 0, 0],
 			"rotationAngle": 0,
-			"scale": [3, 3, 3],
+			"scale": [4, 4, 4],
 			"velocity": [0.0, 0.0, 0.0],
-			"density": 0.0006,
+			"density": 0.001,
 			"color": [255, 255, 255], 
 			"isDynamic": true
 		}

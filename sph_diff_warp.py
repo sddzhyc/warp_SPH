@@ -85,8 +85,8 @@ def compute_density(
     # get local particle variables
     x = particle_x[i]
 
-    # store density
-    rho = float(0.0)
+    # init density with self-contribution
+    rho = m_V[i] * density_kernel(wp.vec3(.0, .0, .0), smoothing_length)
 
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
@@ -97,17 +97,14 @@ def compute_density(
             if mtr.material[index] == MaterialType.FLUID:
                 # compute distance
                 distance = x - particle_x[index]
-                # compute kernel derivative, the cube term in poly6 kernel
                 rho += m_V[index] * density_kernel(distance, smoothing_length)
             elif mtr.material[index] == MaterialType.SOLID:
-                # compute distance
                 distance = x - particle_x[index]
-                # compute kernel derivative, the cube term in poly6 kernel
                 rho += m_V[index] * density_kernel(distance, smoothing_length)
         # add external potential
         particle_rho[i] = density_normalization * base_density * rho
-    elif mtr.material[i] == MaterialType.SOLID:
-        pass
+    # 密度下限设为base_density
+    # particle_rho[i] = wp.max(particle_rho[i], base_density)
 
 @wp.kernel
 def get_acceleration(
@@ -116,7 +113,8 @@ def get_acceleration(
     particle_v: wp.array(dtype=wp.vec3),
     particle_rho: wp.array(dtype=float),
     particle_a: wp.array(dtype=wp.vec3),
-    isotropic_exp: float,
+    stiffness: float,
+    exponent : float,
     base_density: float,
     gravity: float,
     pressure_normalization_no_mass: float,
@@ -136,7 +134,9 @@ def get_acceleration(
     x = particle_x[i]
     v = particle_v[i]
     rho = particle_rho[i]
-    pressure = isotropic_exp * (rho - base_density)
+    # 采用新的EOS公式计算压强 
+    pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
+    # pressure = isotropic_exp * (rho - base_density)
 
     # store forces
     pressure_force = wp.vec3()
@@ -154,7 +154,8 @@ def get_acceleration(
 
                 # get neighbor density and pressures
                 neighbor_rho = particle_rho[index]
-                neighbor_pressure = isotropic_exp * (neighbor_rho - base_density) # TODO: 更新EOS方程形式
+                neighbor_pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
+                # neighbor_pressure = isotropic_exp * (neighbor_rho - base_density) 
 
                 # compute relative position
                 relative_position = particle_x[index] - x
@@ -180,7 +181,7 @@ def get_acceleration(
                         # also aggregate force/torque to the rigid body (Akinci2012 style)
                         r_id = object_id[index]
                         # convert contribution to a force compatible with DFSPH's convention
-                        force = -fp * rho * m_V[i]
+                        force = - pressure_normalization_no_mass * fp * rho * m_V[i]
                         rbs.rigid_force[r_id] += force
                         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 

@@ -2,13 +2,14 @@
 	"Configuration": 
 	{
         "domainStart": [0.0, 0.0, 0.0],
-        "domainEnd": [41.0, 41.0, 80.0],
-		"particleRadius": 0.5,
+        "domainEnd": [4.10, 4.10, 8.0],
+		"particleRadius": 0.05,
 		"numberOfStepsPerRenderUpdate": 1,
 		"density0": 1.0, 
 		"simulationMethod": 4,
-		"gravitation": [0.0, -9.8, 0.0],
-		"timeStepSize": 0.004,
+		"gravitation": [0.0, -0.98, 0.0],
+		"timeStepSize": 0.0004,
+		"timeStepSize": 0.0004,
 		"stiffness": 20,
 		"exponent": 7,
 		"boundaryHandlingMethod": 0,
@@ -21,13 +22,13 @@
 	"RigidBodies": [
 		{
             "objectId": 1,
-			"geometryFile": "./data/models/armadillo_small.obj",
-			"translation": [20, 28.0, 20],
+			"geometryFile": "./data/models/UnitBox.obj",
+			"translation": [3, 2.0, 2],
 			"rotationAxis": [1, 0, 0],
 			"rotationAngle": 0,
-			"scale": [3, 3, 3],
+			"scale": [0.4, 0.4, 0.4],
 			"velocity": [0.0, 0.0, 0.0],
-			"density": 0.0006,
+			"density": 0.001,
 			"color": [255, 255, 255], 
 			"isDynamic": true
 		}
@@ -35,8 +36,8 @@
 	"FluidBlocks": [
 		{
             "objectId": 0,
-			"start": [0.8, 0.1, 0.8],
-			"end": [40, 15.0, 40],
+			"start": [0.08, 0.01, 0.08],
+			"end": [4, 1.5, 4],
 			"translation": [0.0, 0.0, 0.0],
 			"scale": [1, 1, 1],
 			"velocity": [0.0, 0.0, 0.0],

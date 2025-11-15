@@ -28,7 +28,6 @@ class RigidBodies():
         rigid_force: wp.array(dtype=wp.vec3)
         rigid_torque: wp.array(dtype=wp.vec3)
         rigid_mass: wp.array(dtype=wp.float32)
-        # inertia matrices are flattened to 9 floats per body (row-major)
         rigid_inertia: wp.array(dtype=wp.mat33)
         rigid_inertia0: wp.array(dtype=wp.mat33)
         rigid_inv_inertia: wp.array(dtype=wp.mat33)
@@ -55,7 +54,7 @@ def compute_static_boundary_volume(
     if is_static_rigid_body(mtr, i):
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
-        rho = float(0.0)
+        rho = density_kernel(wp.vec3(), smoothing_length)  # self-contribution
         # loop through neighbors to compute density
         for index in neighbors:
             if mtr.material[index] == MaterialType.SOLID:
@@ -65,10 +64,7 @@ def compute_static_boundary_volume(
                 rho += density_kernel(distance, smoothing_length)
         # add external potential
         rho *= density_normalization_no_mass
-        if rho > 0.0:
-            m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
-        else:
-            m_V[i] = 0.0
+        m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
 
 @wp.kernel
 def compute_moving_boundary_volume(
@@ -85,7 +81,7 @@ def compute_moving_boundary_volume(
     if is_dynamic_rigid_body(mtr, i):
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
-        rho = float(0.0)
+        rho = density_kernel(wp.vec3(), smoothing_length)  # self-contribution
             # loop through neighbors to compute density
         for index in neighbors:
             if mtr.material[index] == MaterialType.SOLID:
@@ -95,10 +91,8 @@ def compute_moving_boundary_volume(
                 rho += density_kernel(distance, smoothing_length)
         # add external potential
         rho *= density_normalization_no_mass
-        if rho > 0.0:
-            m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
-        else:
-            m_V[i] = 0.0
+        m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
+
 @wp.kernel
 def solve_rigid_body(
     bodies: RigidBodies,
@@ -144,16 +138,25 @@ def update_rigid_particle_info(
 ):
     tid = wp.tid()
 
+    # if tid == 1:
+    #     # debug: C-style print rotation matrix and quaternion
+    #     q = bodies.rigid_quaternion[1]
+    #     R = wp.quat_to_matrix(bodies.rigid_quaternion[1])
+    #     wp.printf("R: %f %f %f \n %f %f %f\n %f %f %f\n",
+    #         R[0][0], R[0][1], R[0][2],
+    #         R[1][0], R[1][1], R[1][2],
+    #         R[2][0], R[2][1], R[2][2])
+    #     wp.printf("rigid_quaternion: %f %f %f %f\n", q.x, q.y, q.z, q.w)
+
     # update dynamic rigid body particle transforms
     if is_dynamic_rigid_body(mtr, tid):
         r = object_id[tid]
 
         # rest-space relative position (assumes rest orientation is identity)
-        x_rel = particles_x0[tid] - bodies.rigid_rest_cm[r] #TODO: 旋转角度不正确的bug
+        x_rel = particles_x0[tid] - bodies.rigid_rest_cm[r]
         R = wp.quat_to_matrix(bodies.rigid_quaternion[r])
         x_rel_world = R @ x_rel
-        
         # position and velocity must use the SAME world-space lever arm to avoid artifacts
         particles_x[tid] = bodies.rigid_x[r] + x_rel_world
-        # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
-        particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)
+        particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
+        # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)

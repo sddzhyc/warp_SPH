@@ -39,7 +39,6 @@ class SimSPH:
             self.v = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
             # self.rho = wp.zeros(self.n, dtype=float, requires_grad=True)
             self.a = wp.zeros(self.n, dtype=wp.vec3, requires_grad=True)
-            #TODO: transfer other arrays such as material properties
             px = self.ps.x.to_numpy()[: self.n].astype(np.float32)
             # pv = self.ps.v.to_numpy()[: self.n].astype(np.float32)
             prho = self.ps.density.to_numpy()[: self.n].astype(np.float32)
@@ -73,6 +72,11 @@ class SimSPH:
             self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:n_obj].astype(np.float32), dtype=wp.vec3)
             # quaternions (shape: n_obj x 4) -> Warp quat
             q_np = self.ps.rigid_quaternion.to_numpy()[:n_obj].astype(np.float32)
+            # reorder from (w, x, y, z) -> (x, y, z, w) to match Warp quat layout
+            # q_np = np.asarray(q_np, dtype=np.float32)
+            if q_np.ndim == 1:
+                q_np = q_np.reshape(1, 4)
+            q_np = q_np[:, [1, 2, 3, 0]].copy()
             self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
             # scalar masses
             self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:n_obj].astype(np.float32), dtype=float)
@@ -128,7 +132,8 @@ class SimSPH:
             self.width = config.get_cfg("domainEnd")[1] # 80.0
             self.height = config.get_cfg("domainEnd")[2] # 80.0
             self.length = config.get_cfg("domainEnd")[0] # 80.0
-            self.isotropic_exp = config.get_cfg("stiffness") # 20
+            self.stiffness = config.get_cfg("stiffness") # 20
+            self.exponent = config.get_cfg("exponent")
             self.base_density = config.get_cfg("density0")   # 1.0
             # self.base_density = 0.015667
             # self.m_V0 = self.ps.m_V0 #  0.8 * self.particle_diameter ** self.dim
@@ -151,7 +156,7 @@ class SimSPH:
             self.width = 80.0
             self.height = 80.0
             self.length = 80.0
-            self.isotropic_exp = 20
+            self.stiffness = 20
             self.base_density = 1.0
             self.particle_mass = 0.01 * self.smoothing_length**3
             self.dt =0.01 * self.smoothing_length
@@ -249,7 +254,6 @@ class SimSPH:
             particleSet.set(RHO, i, (float(rhos[i]),))
 
         EXPORT_PATH = "pario_export"
-        # TODO: 如果路径不存在则创建路径
         os.makedirs(EXPORT_PATH, exist_ok=True)
         partio.write(f"{EXPORT_PATH}/sph_{self.time_step}.bgeo",particleSet) # write uncompressed
         #partio.write("circle.bgeo",particleSet,True) # write compressed
@@ -288,7 +292,8 @@ class SimSPH:
                             self.v,
                             self.rho,
                             self.a,
-                            self.isotropic_exp,
+                            self.stiffness,
+                            self.exponent,
                             self.base_density,
                             self.gravity,
                             self.pressure_normalization_no_mass,
