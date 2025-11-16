@@ -128,7 +128,7 @@ class SimSPH:
         if (config != None):
             self.particle_radius = config.get_cfg("particleRadius")
             # self.smoothing_length = self.particle_radius     # 0.8
-            self.smoothing_length = 2.1 * self.particle_radius     # 0.8
+            self.smoothing_length = 1.3 * self.particle_radius * 2    # 0.8 # 一般为排列距离的1.3到1.5倍
             self.width = config.get_cfg("domainEnd")[1] # 80.0
             self.height = config.get_cfg("domainEnd")[2] # 80.0
             self.length = config.get_cfg("domainEnd")[0] # 80.0
@@ -140,7 +140,8 @@ class SimSPH:
             self.m_V0 = 0.01 * self.smoothing_length**3 # 修改为设定体积而非质量
             # self.particle_mass = 0.01 * self.smoothing_length**3  # 为什么原example采用0.01?
             self.particle_mass = self.m_V0 * self.base_density # 设置后粒子不稳定？
-            self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
+            # self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
+            self.dt = 0.01 * self.smoothing_length
             self.dynamic_visc = 0.025
             self.damping_coef = -0.95
             self.gravity = config.get_cfg("gravitation")[1]  # -0.1
@@ -297,7 +298,7 @@ class SimSPH:
                             self.base_density,
                             self.gravity,
                             self.pressure_normalization_no_mass,
-                            self.viscous_normalization_no_mass,
+                            self.dynamic_visc, # only use dynamic_visc
                             self.smoothing_length,
                             self.materialMarks,
                             self.m_V,

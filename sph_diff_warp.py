@@ -29,42 +29,10 @@
 ###########################################################################
 import warp as wp
 
+from kernel_func import diff_pressure_kernel, diff_viscous_kernel
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, is_dynamic_rigid_body
 # from particle_system_np import ParticleSystem
 from kernel_func import *
-# import partio
-
-@wp.func
-def diff_pressure_kernel(
-    xyz: wp.vec3, pressure: float, neighbor_pressure: float, rho: float , neighbor_rho: float, smoothing_length: float
-):
-    # calculate distance
-    distance = wp.sqrt(wp.dot(xyz, xyz))
-
-    if distance < smoothing_length: # 默认smoothing_length即支持半径？
-        # calculate terms of kernel
-        term_1 = -xyz / distance # 单位距离向量
-        term_2 = (neighbor_pressure + pressure) / (2.0 * neighbor_rho)
-        # term_2 = neighbor_pressure / (neighbor_rho * neighbor_rho) + pressure / (rho * rho)
-        term_3 = square(smoothing_length - distance)  # gradient of SPH kernel (grad W); TODO: use another kernel
-        return term_1 * term_2 * term_3
-    else:
-        return wp.vec3()
-
-
-@wp.func
-def diff_viscous_kernel(xyz: wp.vec3, v: wp.vec3, neighbor_v: wp.vec3, neighbor_rho: float, smoothing_length: float):
-    # calculate distance
-    distance = wp.sqrt(wp.dot(xyz, xyz))
-
-    # calculate terms of kernel
-    if distance < smoothing_length:
-        term_1 = (neighbor_v - v) / neighbor_rho
-        term_2 = smoothing_length - distance
-        return term_1 * term_2
-    else:
-        return wp.vec3()
-
 
 @wp.kernel
 def compute_density(
@@ -86,7 +54,7 @@ def compute_density(
     x = particle_x[i]
 
     # init density with self-contribution
-    rho = m_V[i] * density_kernel(wp.vec3(.0, .0, .0), smoothing_length)
+    rho = m_V[i] * cubic_kernel(wp.vec3(.0, .0, .0), smoothing_length)
 
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
@@ -97,12 +65,13 @@ def compute_density(
             if mtr.material[index] == MaterialType.FLUID:
                 # compute distance
                 distance = x - particle_x[index]
-                rho += m_V[index] * density_kernel(distance, smoothing_length)
+                rho += m_V[index] * cubic_kernel(distance, smoothing_length)
             elif mtr.material[index] == MaterialType.SOLID:
                 distance = x - particle_x[index]
-                rho += m_V[index] * density_kernel(distance, smoothing_length)
+                rho += m_V[index] * cubic_kernel(distance, smoothing_length)
         # add external potential
-        particle_rho[i] = density_normalization * base_density * rho
+        # particle_rho[i] = density_normalization * base_density * rho
+        particle_rho[i] = base_density * rho
     # 密度下限设为base_density
     # particle_rho[i] = wp.max(particle_rho[i], base_density)
 
@@ -161,13 +130,13 @@ def get_acceleration(
                 relative_position = particle_x[index] - x
                 if mtr.material[index] == MaterialType.FLUID:
                     # calculate pressure force
-                    pressure_force += base_density * m_V[index] * diff_pressure_kernel(
+                    pressure_force += base_density * m_V[index] * diff_pressure_kernel_cubic(
                         relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
                     )
                     # compute kernel derivative
-                    viscous_force += base_density * m_V[index] * diff_viscous_kernel(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
+                    viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
                 elif mtr.material[index] == MaterialType.SOLID:
-                    fp = base_density * m_V[index] * diff_pressure_kernel(
+                    fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
                         relative_position, pressure, pressure, rho, base_density, smoothing_length
                     )
                     pressure_force += fp
@@ -181,12 +150,12 @@ def get_acceleration(
                         # also aggregate force/torque to the rigid body (Akinci2012 style)
                         r_id = object_id[index]
                         # convert contribution to a force compatible with DFSPH's convention
-                        force = - pressure_normalization_no_mass * fp * rho * m_V[i]
+                        force = - fp * rho * m_V[i]
                         rbs.rigid_force[r_id] += force
                         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
         # sum all forces
-        force = pressure_normalization_no_mass * pressure_force + viscous_normalization * viscous_force
+        force = pressure_force + viscous_normalization * viscous_force
 
         # add external potential
         particle_a[i] = force / rho + wp.vec3(0.0, gravity, 0.0)

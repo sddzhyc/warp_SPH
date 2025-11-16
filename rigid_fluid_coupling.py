@@ -54,16 +54,16 @@ def compute_static_boundary_volume(
     if is_static_rigid_body(mtr, i):
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
-        rho = density_kernel(wp.vec3(), smoothing_length)  # self-contribution
+        rho = cubic_kernel(wp.vec3(), smoothing_length)  # self-contribution
         # loop through neighbors to compute density
         for index in neighbors:
             if mtr.material[index] == MaterialType.SOLID:
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
-                rho += density_kernel(distance, smoothing_length)
+                rho += cubic_kernel(distance, smoothing_length)
         # add external potential
-        rho *= density_normalization_no_mass
+        #rho *= density_normalization_no_mass
         m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
 
 @wp.kernel
@@ -81,16 +81,16 @@ def compute_moving_boundary_volume(
     if is_dynamic_rigid_body(mtr, i):
         x = particle_x[i]
         neighbors = wp.hash_grid_query(grid, x, smoothing_length)
-        rho = density_kernel(wp.vec3(), smoothing_length)  # self-contribution
+        rho = cubic_kernel(wp.vec3(), smoothing_length)  # self-contribution
             # loop through neighbors to compute density
         for index in neighbors:
             if mtr.material[index] == MaterialType.SOLID:
                 # compute distance
                 distance = x - particle_x[index]
                 # compute kernel derivative, the cube term in poly6 kernel
-                rho += density_kernel(distance, smoothing_length)
+                rho += cubic_kernel(distance, smoothing_length)
         # add external potential
-        rho *= density_normalization_no_mass
+        # rho *= density_normalization_no_mass
         m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
 
 @wp.kernel
