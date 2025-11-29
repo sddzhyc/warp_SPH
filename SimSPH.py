@@ -45,6 +45,7 @@ class SimSPH:
             self.x = wp.array(px, dtype=wp.vec3)
             # self.v = wp.array(pv, dtype=wp.vec3)
             self.rho = wp.array(prho, dtype=float)
+            self.pressure = wp.zeros(self.n, dtype=float, requires_grad=True)
             print(f"n: {self.n}, x shape: {self.x.shape}, rho[1] = {prho[1]}")
 
             self.materialMarks = MaterialMarks()
@@ -86,8 +87,13 @@ class SimSPH:
             self.rbs.rigid_inertia0    = wp.array(self.ps.rigid_inertia0.to_numpy()[:n_obj].astype(np.float32), dtype=wp.mat33)
             self.rbs.rigid_inv_inertia = wp.array(self.ps.rigid_inv_inertia.to_numpy()[:n_obj].astype(np.float32), dtype=wp.mat33)
             self.print_rigid_info()
-            grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
-            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
+            # grid_size = int(self.ps.grid_num[0]) if hasattr(self.ps, 'grid_num') else max(1, int(self.height / (4.0 * self.smoothing_length)))
+            grid_size_height = max(1, int(self.height / (4.0 * self.smoothing_length))) # max(1, int(self.height / (4.0 * self.smoothing_length)))
+            grid_size_width = max(1, int(self.width / (4.0 * self.smoothing_length)))
+            grid_size_length = max(1, int(self.length / (4.0 * self.smoothing_length)))
+            # self.grid = wp.HashGrid(self.ps.grid_num[0], self.ps.grid_num[1], self.ps.grid_num[2])
+            self.grid = wp.HashGrid(grid_size_length, grid_size_width, grid_size_height)
+
     
     def initialize(self):
         self.m_V = wp.array(np.full(self.n, self.m_V0, dtype=np.float32), dtype=wp.float32)
@@ -128,7 +134,7 @@ class SimSPH:
         if (config != None):
             self.particle_radius = config.get_cfg("particleRadius")
             # self.smoothing_length = self.particle_radius     # 0.8
-            self.smoothing_length = 1.3 * self.particle_radius * 2    # 0.8 # 一般为排列距离的1.3到1.5倍
+            self.smoothing_length = 1.2 * self.particle_radius * 2 # 0.8 # 一般为排列距离的1.3到1.5倍
             self.width = config.get_cfg("domainEnd")[1] # 80.0
             self.height = config.get_cfg("domainEnd")[2] # 80.0
             self.length = config.get_cfg("domainEnd")[0] # 80.0
@@ -137,7 +143,7 @@ class SimSPH:
             self.base_density = config.get_cfg("density0")   # 1.0
             # self.base_density = 0.015667
             # self.m_V0 = self.ps.m_V0 #  0.8 * self.particle_diameter ** self.dim
-            self.m_V0 = 0.01 * self.smoothing_length**3 # 修改为设定体积而非质量
+            self.m_V0 = 0.15 * self.smoothing_length**3 # 修改为设定体积而非质量
             # self.particle_mass = 0.01 * self.smoothing_length**3  # 为什么原example采用0.01?
             self.particle_mass = self.m_V0 * self.base_density # 设置后粒子不稳定？
             # self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
@@ -208,8 +214,8 @@ class SimSPH:
         else:
             self.ti_to_warp()
             self.initialize()
-            grid_size = int(self.height / (4.0 * self.smoothing_length))
-            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
+            # grid_size = int(self.height / (4.0 * self.smoothing_length))
+            # self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
 
             # self.rbs = RigidBodies()
             # self.rbs.rigid_rest_cm   = wp.zeros(n_obj, dtype=wp.vec3)
@@ -283,6 +289,13 @@ class SimSPH:
                                 self.materialMarks, self.m_V, self.base_density],
                     )
 
+                    wp.launch(
+                        kernel=compute_pressure,
+                        dim=self.n,
+                        inputs=[self.rho, self.pressure,
+                                self.stiffness, self.exponent, self.base_density],
+                    )
+
                     # get new acceleration
                     wp.launch(
                         kernel=get_acceleration,
@@ -292,6 +305,7 @@ class SimSPH:
                             self.x,
                             self.v,
                             self.rho,
+                            self.pressure,
                             self.a,
                             self.stiffness,
                             self.exponent,
@@ -409,6 +423,7 @@ class SimSPH:
         out_path = series_prefix.format(cnt_ply)
         export_ply_points(out_path, np_pos.astype(np.float32), {
             'rho': np_rho.astype(np.float32),
+            'pressure': self.pressure.numpy().astype(np.float32),
             'mV': np_mV.astype(np.float32),
             'object_id': np_obj_id.astype(np.float32),
             'material': self.materialMarks.material.numpy().astype(np.int32),

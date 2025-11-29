@@ -1,6 +1,5 @@
 import warp as wp
 
-from kernel_func import wp
 @wp.func
 def square(x: float):
     return x * x

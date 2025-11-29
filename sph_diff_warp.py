@@ -76,11 +76,32 @@ def compute_density(
     # particle_rho[i] = wp.max(particle_rho[i], base_density)
 
 @wp.kernel
+def compute_pressure(
+    particle_rho: wp.array(dtype=float),
+    particle_p: wp.array(dtype=float),
+    stiffness: float,
+    exponent : float,
+    base_density: float
+):
+    tid = wp.tid()
+
+    # get local particle variables
+    rho = particle_rho[tid]
+
+    # 采用Tait方程计算压强
+    pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
+    # pressure = isotropic_exp * (rho - base_density)
+
+    # store pressure
+    particle_p[tid] = pressure
+
+@wp.kernel
 def get_acceleration(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     particle_v: wp.array(dtype=wp.vec3),
     particle_rho: wp.array(dtype=float),
+    particle_p: wp.array(dtype=float),
     particle_a: wp.array(dtype=wp.vec3),
     stiffness: float,
     exponent : float,
@@ -104,7 +125,8 @@ def get_acceleration(
     v = particle_v[i]
     rho = particle_rho[i]
     # 采用新的EOS公式计算压强 
-    pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
+    #pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
+    pressure = particle_p[i]
     # pressure = isotropic_exp * (rho - base_density)
 
     # store forces
@@ -123,7 +145,8 @@ def get_acceleration(
 
                 # get neighbor density and pressures
                 neighbor_rho = particle_rho[index]
-                neighbor_pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
+                # neighbor_pressure = stiffness * (wp.pow(neighbor_rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
+                neighbor_pressure = particle_p[index]
                 # neighbor_pressure = isotropic_exp * (neighbor_rho - base_density) 
 
                 # compute relative position
