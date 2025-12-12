@@ -34,7 +34,7 @@ def diff_pressure_kernel(
 
     if distance < smoothing_length: # 默认smoothing_length即支持半径？
         # calculate terms of kernel
-        term_1 = -xyz / distance # 单位距离向量
+        term_1 = -xyz / distance # 单位距离向量：注意反向了
         term_2 = (neighbor_pressure + pressure) / (2.0 * neighbor_rho)
         # term_2 = neighbor_pressure / (neighbor_rho * neighbor_rho) + pressure / (rho * rho)
         term_3 = square(smoothing_length - distance)  # gradient of SPH kernel (grad W); TODO: use another kernel
@@ -86,7 +86,7 @@ def diff_viscous_kernel_cubic(r: wp.vec3,  v: wp.vec3, neighbor_v: wp.vec3 , nei
 
 @wp.func
 def cubic_kernel(xyz: wp.vec3, h: wp.float32):
-    distance = wp.sqrt(wp.dot(xyz, xyz))
+    distance = wp.length(xyz)
     res = wp.cast(0.0, wp.float32)
     dim = 3 # TODO: support different dimensions
     # value of cubic spline smoothing kernel
@@ -120,7 +120,7 @@ def cubic_kernel_derivative(r: wp.vec3, support_radius: wp.float32, dim: int):
     elif dim == 3:
         k = 8. / wp.pi
     k = 6. * k / h ** float(dim)
-    r_norm = wp.sqrt(wp.dot(r, r))
+    r_norm = wp.length(r)
     q = r_norm / h
     res = wp.vec3()
     if r_norm > 1e-5 and q <= 1.0:

@@ -23,7 +23,7 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_frames", type=int, default=400, help="Total number of frames.")
+    parser.add_argument("--num_frames", type=int, default=80000, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     args = parser.parse_args()
 
@@ -39,16 +39,16 @@ if __name__ == "__main__":
         fps = 60
     frame_time = 1.0 / fps
 
-    output_interval = int(frame_time / config.get_cfg("timeStepSize"))
+    # output_interval = int(frame_time / config.get_cfg("timeStepSize"))
     total_time = config.get_cfg("totalTime")
     if total_time == None:
         total_time = 10.0
 
     total_rounds = int(total_time / config.get_cfg("timeStepSize"))
     
-    if config.get_cfg("outputInterval"):
-        output_interval = config.get_cfg("outputInterval")
-
+    # if config.get_cfg("outputInterval"):
+    #     output_interval = config.get_cfg("outputInterval")
+    output_interval = int(0.016 / config.get_cfg("timeStepSize"))
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
@@ -75,6 +75,7 @@ if __name__ == "__main__":
             # example.render()
             if cnt % output_interval == 0:
                 if output_ply:
+                    print(f"Exporting frame {cnt_ply} to PLY on time step {cnt}.")
                     example.export_ply(series_prefix, cnt_ply)
                 if output_obj:
                     for r_body_id in container.object_id_rigid_body:
@@ -84,6 +85,7 @@ if __name__ == "__main__":
                 cnt_ply += 1
 
             example.step(time_step)
+            cnt += 1
             # example.partio_export()
             #if output_frames:
                 # if cnt % output_interval == 0:

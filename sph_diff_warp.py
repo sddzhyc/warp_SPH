@@ -54,6 +54,7 @@ def compute_density(
     x = particle_x[i]
 
     # init density with self-contribution
+    # rho = wp.cast(0.0, wp.float32)
     rho = m_V[i] * cubic_kernel(wp.vec3(.0, .0, .0), smoothing_length)
 
     # particle contact
@@ -62,16 +63,19 @@ def compute_density(
     if mtr.material[i] == MaterialType.FLUID:
         # loop through neighbors to compute density
         for index in neighbors:
+            # skip self to avoid double-counting the self-contribution
+            if index == i:
+                continue
+            if wp.length(x - particle_x[index]) > smoothing_length:
+                continue
+            distance = x - particle_x[index]
             if mtr.material[index] == MaterialType.FLUID:
-                # compute distance
-                distance = x - particle_x[index]
                 rho += m_V[index] * cubic_kernel(distance, smoothing_length)
             elif mtr.material[index] == MaterialType.SOLID:
-                distance = x - particle_x[index]
                 rho += m_V[index] * cubic_kernel(distance, smoothing_length)
         # add external potential
-        # particle_rho[i] = density_normalization * base_density * rho
-        particle_rho[i] = base_density * rho
+        particle_rho[i] = density_normalization * base_density * rho
+        # particle_rho[i] = base_density * rho
     # 密度下限设为base_density
     # particle_rho[i] = wp.max(particle_rho[i], base_density)
 
@@ -79,21 +83,81 @@ def compute_density(
 def compute_pressure(
     particle_rho: wp.array(dtype=float),
     particle_p: wp.array(dtype=float),
+    mtr : MaterialMarks,
     stiffness: float,
     exponent : float,
     base_density: float
 ):
     tid = wp.tid()
+    if mtr.material[tid] == MaterialType.FLUID:
+        # get local particle variables
+        rho = particle_rho[tid]
+
+        # clamp density to base_density to avoid invalid/too-small densities
+        rho = wp.max(rho, base_density)
+        particle_rho[tid] = rho
+        # 采用Tait方程计算压强
+        pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
+        # pressure = isotropic_exp * (rho - base_density)
+
+        # store pressure
+        particle_p[tid] = pressure
+
+@wp.kernel
+def compute_non_presure_forces(
+    grid: wp.uint64,
+    particle_x: wp.array(dtype=wp.vec3),
+    particle_v: wp.array(dtype=wp.vec3),
+    particle_rho: wp.array(dtype=float),
+    viscous_normalization: float,
+    smoothing_length: float,
+    mtr : MaterialMarks,
+    m_V: wp.array(dtype=float),
+    base_density: float,
+    particle_viscous_force: wp.array(dtype=wp.vec3),
+    object_id: wp.array(dtype=wp.int32),
+    rbs :RigidBodies
+):
+    tid = wp.tid()
+    
+    # order threads by cell
+    i = wp.hash_grid_point_id(grid, tid)
+    
+    if mtr.material[i] != MaterialType.FLUID:
+        particle_viscous_force[i] = wp.vec3(0.0, 0.0, 0.0)
+        return
 
     # get local particle variables
-    rho = particle_rho[tid]
-
-    # 采用Tait方程计算压强
-    pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
-    # pressure = isotropic_exp * (rho - base_density)
-
-    # store pressure
-    particle_p[tid] = pressure
+    x = particle_x[i]
+    v = particle_v[i]
+    
+    viscous_force = wp.vec3(0.0, 0.0, 0.0)
+    
+    # particle contact
+    neighbors = wp.hash_grid_query(grid, x, smoothing_length)
+    
+    for index in neighbors:
+        if index != i:
+            d = wp.length(x - particle_x[index])
+            if d < smoothing_length:
+                # get neighbor velocity
+                neighbor_v = particle_v[index]
+                neighbor_rho = particle_rho[index]
+                
+                relative_position = particle_x[index] - x
+                
+                if mtr.material[index] == MaterialType.FLUID:
+                    viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
+                # elif mtr.material[index] == MaterialType.SOLID:
+                #     term = base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
+                #     viscous_force += term
+                #     if is_dynamic_rigid_body(mtr, index):
+                #         r_id = object_id[index]
+                #         force = -viscous_normalization * term
+                #         rbs.rigid_force[r_id] += force
+                #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
+                
+    particle_viscous_force[i] = viscous_normalization * viscous_force
 
 @wp.kernel
 def get_acceleration(
@@ -112,6 +176,9 @@ def get_acceleration(
     smoothing_length: float,
     mtr : MaterialMarks,
     m_V: wp.array(dtype=float),
+    particle_pressure_force: wp.array(dtype=wp.vec3),
+    particle_viscous_force: wp.array(dtype=wp.vec3),
+    neibor_nums: wp.array(dtype=wp.int32),
     object_id: wp.array(dtype=wp.int32),
     rbs :RigidBodies
 ):
@@ -131,18 +198,19 @@ def get_acceleration(
 
     # store forces
     pressure_force = wp.vec3()
-    viscous_force = wp.vec3()
+    # viscous_force = wp.vec3()
 
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
     if mtr.material[i] == MaterialType.FLUID:
+        count = wp.int32(0)
         # loop through neighbors to compute acceleration
         for index in neighbors:
-            if index != i:
+            if index != i and wp.length(x - particle_x[index])  < smoothing_length:
+                count += 1
                 # get neighbor velocity
-                neighbor_v = particle_v[index]
-
+                # neighbor_v = particle_v[index]
                 # get neighbor density and pressures
                 neighbor_rho = particle_rho[index]
                 # neighbor_pressure = stiffness * (wp.pow(neighbor_rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
@@ -153,35 +221,38 @@ def get_acceleration(
                 relative_position = particle_x[index] - x
                 if mtr.material[index] == MaterialType.FLUID:
                     # calculate pressure force
+                    #  pressure_force += -base_density * m_V[index] * diff_pressure_kernel(
                     pressure_force += base_density * m_V[index] * diff_pressure_kernel_cubic(
                         relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
                     )
                     # compute kernel derivative
-                    viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
+                    # viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
                 elif mtr.material[index] == MaterialType.SOLID:
                     fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
+                    # fp = -base_density * m_V[index] * diff_pressure_kernel(
                         relative_position, pressure, pressure, rho, base_density, smoothing_length
                     )
                     pressure_force += fp
                     if  is_dynamic_rigid_body(mtr, index):
-                        # debug: print fp for a small subset to avoid flooding output
-                        # if fp != wp.vec3():
-                        #     wp.printf("fp=(%f, %f, %f), i=%d, neighbor=%d\n", fp[0], fp[1], fp[2], i, index)
-                        # keep particle-level acceleration update (existing behavior) 疑似shape matching的写法？
-                        # TODO: 为什么多乘了一个self.density_0？
-                        # self.ps.acceleration[p_j] += -f_p * self.density_0 / self.ps.density[p_j]
-                        # also aggregate force/torque to the rigid body (Akinci2012 style)
                         r_id = object_id[index]
                         # convert contribution to a force compatible with DFSPH's convention
                         force = - fp * rho * m_V[i]
+                        # force = -pressure_normalization_no_mass * fp * rho * m_V[i]
                         rbs.rigid_force[r_id] += force
                         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
-        # sum all forces
-        force = pressure_force + viscous_normalization * viscous_force
+        # store neighbor count used for pressure computation
+        neibor_nums[i] = wp.cast(count, wp.int32)
+        # write per-particle pressure/viscous contributions for diagnostics
+        #pressure_force = -pressure_force # TODO：cubic需要添加，而diff_pressure_kernel不需要添加（pressure_normalization_no_mass已负）
 
+        # particle_viscous_force[i] = viscous_normalization * viscous_force
+        # force = pressure_force + viscous_normalization * viscous_force
+        pressure_force = pressure_force * pressure_normalization_no_mass
+        particle_pressure_force[i] = pressure_force
         # add external potential
-        particle_a[i] = force / rho + wp.vec3(0.0, gravity, 0.0)
+        particle_a[i] = pressure_force + particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
+        # particle_a[i] = pressure_force / rho + particle_viscous_force[i] / rho + wp.vec3(0.0, gravity, 0.0) # 粘性力除以密度会导致粘性力过小！！
 
 
 @wp.kernel
@@ -268,3 +339,63 @@ def initialize_particles(
 
     # set position
     particle_x[tid] = pos
+
+
+# refactored collision response function
+@wp.func
+def simulate_collisions_warp(particle_v: wp.array(dtype=wp.vec3), idx: int, n: wp.vec3):
+    # Collision factor, assume roughly (1-c_f)*velocity loss after collision
+    c_f = 0.5
+    v = particle_v[idx]
+    particle_v[idx] = v - (1.0 + c_f) * wp.dot(v, n) * n
+
+
+@wp.kernel
+def enforce_boundary_3D_warp(
+    particle_x: wp.array(dtype=wp.vec3),
+    particle_v: wp.array(dtype=wp.vec3),
+    mtr : MaterialMarks,
+    domain_size: wp.vec3,
+    padding: float,
+):
+    tid = wp.tid()
+
+    # only handle particles of the requested type that are dynamic
+    if mtr.material[tid] != MaterialType.FLUID or not mtr.is_dynamic[tid]:
+        return
+
+    pos = particle_x[tid]
+    collision_normal = wp.vec3(0.0, 0.0, 0.0)
+
+    # x axis
+    if pos[0] > domain_size[0] - padding:
+        collision_normal = collision_normal + wp.vec3(1.0, 0.0, 0.0)
+        pos = wp.vec3(domain_size[0] - padding, pos[1], pos[2])
+    if pos[0] <= padding:
+        collision_normal = collision_normal + wp.vec3(-1.0, 0.0, 0.0)
+        pos = wp.vec3(padding, pos[1], pos[2])
+
+    # y axis
+    if pos[1] > domain_size[1] - padding:
+        collision_normal = collision_normal + wp.vec3(0.0, 1.0, 0.0)
+        pos = wp.vec3(pos[0], domain_size[1] - padding, pos[2])
+    if pos[1] <= padding:
+        collision_normal = collision_normal + wp.vec3(0.0, -1.0, 0.0)
+        pos = wp.vec3(pos[0], padding, pos[2])
+
+    # z axis
+    if pos[2] > domain_size[2] - padding:
+        collision_normal = collision_normal + wp.vec3(0.0, 0.0, 1.0)
+        pos = wp.vec3(pos[0], pos[1], domain_size[2] - padding)
+    if pos[2] <= padding:
+        collision_normal = collision_normal + wp.vec3(0.0, 0.0, -1.0)
+        pos = wp.vec3(pos[0], pos[1], padding)
+
+    # write back position
+    particle_x[tid] = pos
+
+    # if collided, apply collision response
+    cn_len = wp.length(collision_normal)
+    if cn_len > 1e-6:
+        n = collision_normal / cn_len
+        simulate_collisions_warp(particle_v, tid, n)
