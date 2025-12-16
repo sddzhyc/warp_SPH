@@ -25,6 +25,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--num_frames", type=int, default=80000, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
+    parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
@@ -68,7 +69,7 @@ if __name__ == "__main__":
         container = ParticleSystem(config, GGUI=True)
         # prepare the container before creating the simulation so SimSPH
 
-        example = SimSPH(config, stage_path=args.stage_path, container = container)
+        example = SimSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
         cnt = 0
         cnt_ply = 0
         for time_step in range(args.num_frames):

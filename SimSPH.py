@@ -1,34 +1,11 @@
 from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
+from sim_utils import export_ply_points, load_ply_points
 from sph_diff_warp import *
 
 import numpy as np
 import warp as wp
-import os
 # optional dependency for flexible PLY export with custom attributes
-from plyfile import PlyData, PlyElement
-
-def export_ply_points(path: str, pos: np.ndarray, attrs: dict):
-    """Export point cloud to PLY with arbitrary per-vertex scalar attributes.
-
-    path: output .ply path
-    pos: (N,3) float32 numpy array
-    attrs: dict of {name: (N,) array-like} extra per-vertex scalars (e.g., rho, mV)
-    """
-    n = int(pos.shape[0])
-    dtype = [('x','f4'),('y','f4'),('z','f4')]
-    for name in attrs.keys():
-        dtype.append((str(name), 'f4'))
-
-    data = np.empty(n, dtype=dtype)
-    data['x'] = pos[:, 0].astype('f4')
-    data['y'] = pos[:, 1].astype('f4')
-    data['z'] = pos[:, 2].astype('f4')
-    for name, arr in attrs.items():
-        data[str(name)] = np.asarray(arr, dtype='f4')
-
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    PlyData([PlyElement.describe(data, 'vertex')], text=True).write(path)
 
 class SimSPH:
     def initialize(self):
@@ -52,7 +29,7 @@ class SimSPH:
         print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
-    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd"):
+    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd", ply_path=None):
         """
         If `container` (a `BaseContainer`) is provided, SimSPH will use the container's
         particle arrays as the source of truth. Otherwise it falls back to the original
@@ -171,7 +148,10 @@ class SimSPH:
             # self.m_V0 = getattr(self, 'm_V0', 0.01 * self.smoothing_length**3)
             self.m_V = wp.array(np.full(self.particle_max_num, self.m_V0, dtype=np.float32), dtype=wp.float32)
         else:
-            self.ti_to_warp()
+            if ply_path:
+                self.init_from_ply(ply_path)
+            else:
+                self.ti_to_warp()
             # 调试导出时使用，注意在ti_to_warp初始化n之后定义
             self.neibor_nums = wp.zeros(self.particle_max_num, dtype=wp.int32)
             self.pressure_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
@@ -218,7 +198,7 @@ class SimSPH:
                 self.rbs.rigid_inertia     = wp.array(self.ps.rigid_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
                 self.rbs.rigid_inertia0    = wp.array(self.ps.rigid_inertia0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
                 self.rbs.rigid_inv_inertia = wp.array(self.ps.rigid_inv_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
-                self.print_rigid_info()            
+                # self.print_rigid_info()            
             
             # allocate arrays and initialize
             self.object_id = wp.array(self.ps.object_id.to_numpy()[: self.particle_max_num].astype(np.int32), dtype=wp.int32)
@@ -242,6 +222,95 @@ class SimSPH:
             self.materialMarks.is_dynamic = wp.array(self.ps.is_dynamic.to_numpy()[: self.particle_max_num].astype(np.int32), dtype=wp.int32)
 
             self.m_V = wp.array(self.ps.m_V.to_numpy()[: self.particle_max_num].astype(np.float32), dtype=wp.float32)
+
+    def init_from_ply(self, ply_path):
+        print(f"Loading initial state from {ply_path}")
+        pos, attrs = load_ply_points(ply_path)
+        num_particles = pos.shape[0]
+        
+        print(f"Initializing particle arrays with {num_particles} particles from PLY")
+        self.particle_max_num = num_particles
+
+        # Initialize Rigid Bodies from PS if available
+        if self.ps is not None:
+            self.fluid_particle_num = int(self.ps.fluid_particle_num)
+            self.solid_particle_num = int(self.ps.solid_particle_num)
+            # self.particle_max_num = int(self.ps.particle_max_num) # Don't overwrite this from PS, use PLY count
+            self.num_rigid_bodies = int(self.ps.num_rigid_bodies)
+            self.num_objects = int(self.ps.num_objects)
+            
+            self.rbs = RigidBodies()
+            if self.num_rigid_bodies > 0:
+                self.rbs.rigid_rest_cm = wp.array(self.ps.rigid_rest_cm.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_v0      = wp.array(self.ps.rigid_v0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                
+                q_np = self.ps.rigid_quaternion.to_numpy()[:self.num_objects].astype(np.float32)
+                if q_np.ndim == 1:
+                    q_np = q_np.reshape(1, 4)
+                q_np = q_np[:, [1, 2, 3, 0]].copy()
+                self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+                
+                self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
+                self.rbs.rigid_inv_mass = wp.array(self.ps.rigid_inv_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
+                self.rbs.rigid_inertia     = wp.array(self.ps.rigid_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
+                self.rbs.rigid_inertia0    = wp.array(self.ps.rigid_inertia0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
+                self.rbs.rigid_inv_inertia = wp.array(self.ps.rigid_inv_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
+        else:
+             # If no PS, maybe initialize empty RBS?
+             self.rbs = RigidBodies() # Assuming default constructor works or handles empty
+             self.num_objects = 0
+             self.num_rigid_bodies = 0
+        
+        # Allocate basic fields
+        self.x = wp.array(pos, dtype=wp.vec3, requires_grad=True)
+        
+        if 'vx' in attrs and 'vy' in attrs and 'vz' in attrs:
+            vel = np.stack([attrs['vx'], attrs['vy'], attrs['vz']], axis=1).astype(np.float32)
+            self.v = wp.array(vel, dtype=wp.vec3, requires_grad=True)
+        else:
+            self.v = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+            
+        if 'rho' in attrs:
+            self.rho = wp.array(attrs['rho'], dtype=float, requires_grad=True)
+        else:
+            self.rho = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+
+        self.pressure = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+        
+        if 'mV' in attrs:
+            self.m_V = wp.array(attrs['mV'], dtype=float, requires_grad=True)
+        else:
+            self.m_V = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+            
+        if 'object_id' in attrs:
+            self.object_id = wp.array(attrs['object_id'].astype(np.int32), dtype=wp.int32)
+        else:
+            self.object_id = wp.zeros(self.particle_max_num, dtype=wp.int32)
+            
+        # Initialize material marks
+        if not hasattr(self, 'materialMarks'):
+            self.materialMarks = MaterialMarks()
+        
+        if 'material' in attrs:
+            self.materialMarks.material = wp.array(attrs['material'].astype(np.int32), dtype=wp.int32)
+        else:
+            self.materialMarks.material = wp.zeros(self.particle_max_num, dtype=wp.int32)
+            
+        if 'is_dynamic' in attrs:
+            self.materialMarks.is_dynamic = wp.array(attrs['is_dynamic'].astype(np.int32), dtype=wp.int32)
+        else:
+            self.materialMarks.is_dynamic = wp.zeros(self.particle_max_num, dtype=wp.int32)
+            
+        self.x_0 = wp.array(pos, dtype=wp.vec3)
+
+        print("Initialization from PLY complete.")
 
     def step(self, t):
         self.time_step = t
@@ -373,46 +442,6 @@ class SimSPH:
         #     )
         #     self.renderer.end_frame()
 
-    # ----------------- NumPy host implementations for boundary volumes -----------------
-    @staticmethod
-    def _cubic_kernel_numpy(r, h, dim=3):
-        """Vectorized cubic spline kernel (matching Taichi version) for numpy arrays.
-
-        r: scalar or numpy array of distances (not squared)
-        h: smoothing length
-        dim: 1/2/3
-        returns: kernel value(s)
-        """
-        r = np.array(r, copy=False)
-        q = r / h
-        # normalization constant k
-        if dim == 1:
-            k = 4.0 / 3.0
-        elif dim == 2:
-            k = 40.0 / 7.0 / np.pi
-        else:
-            k = 8.0 / np.pi
-        k = k / (h ** dim)
-
-        res = np.zeros_like(q, dtype=np.float64)
-        mask1 = q <= 1.0
-        if np.any(mask1):
-            q1 = q[mask1]
-            mask2 = q1 <= 0.5
-            if np.any(mask2):
-                q2 = q1[mask2]
-                res_mask2 = k * (6.0 * q2 ** 3 - 6.0 * q2 ** 2 + 1.0)
-                res[mask1.nonzero()[0][mask2]] = res_mask2
-            if np.any(~mask2):
-                q3 = q1[~mask2]
-                res_mask3 = k * 2.0 * np.power(1.0 - q3, 3.0)
-                res[mask1.nonzero()[0][~mask2]] = res_mask3
-
-        # if input was scalar, return scalar
-        if res.shape == ():
-            return float(res)
-        return res
-
     def print_rigid_info(self):
         if self.num_rigid_bodies > 0:
             masses = self.rbs.rigid_mass.numpy()
@@ -439,6 +468,7 @@ class SimSPH:
         pf = self.pressure_forces.numpy()
         vf = self.viscous_forces.numpy()
         np_a = self.a.numpy()
+        np_v = self.v.numpy()  # velocity
         out_path = series_prefix.format(cnt_ply)
         export_ply_points(out_path, np_pos.astype(np.float32), {
             'rho': np_rho.astype(np.float32),
@@ -455,6 +485,9 @@ class SimSPH:
             'ax': np_a[:,0].astype(np.float32),
             'ay': np_a[:,1].astype(np.float32),
             'az': np_a[:,2].astype(np.float32),
+            'vx': np_v[:,0].astype(np.float32),
+            'vy': np_v[:,1].astype(np.float32),
+            'vz': np_v[:,2].astype(np.float32),
             'material': self.materialMarks.material.numpy().astype(np.int32),
             'is_dynamic': self.materialMarks.is_dynamic.numpy().astype(np.int32),
         })

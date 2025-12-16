@@ -3,7 +3,6 @@ import numpy as np
 import trimesh as tm
 from functools import reduce
 from config_builder import SimConfig
-from scan_single_buffer import parallel_prefix_sum_inclusive_inplace
 
 @ti.data_oriented
 class ParticleSystem:
