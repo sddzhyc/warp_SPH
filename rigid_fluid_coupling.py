@@ -93,38 +93,92 @@ def compute_moving_boundary_volume(
         # rho *= density_normalization_no_mass
         m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
 
+#TODO: 实现 compute_rigid_rest_cm、compute_rigid_mass_info
+
 @wp.kernel
 def solve_rigid_body(
     bodies: RigidBodies,
     g: wp.vec3,
     dt: float,
+    bodies_out: RigidBodies
 ):
     tid = wp.tid()
 
     f = bodies.rigid_force[tid] + g * bodies.rigid_mass[tid]
     v = bodies.rigid_v[tid] + dt * f / bodies.rigid_mass[tid]
-    bodies.rigid_force[tid] = wp.vec3(0.0, 0.0, 0.0)
+    bodies_out.rigid_force[tid] = wp.vec3(0.0, 0.0, 0.0)
 
-    bodies.rigid_x[tid] += dt * v
+    bodies_out.rigid_x[tid] = bodies.rigid_x[tid] + dt * v
 
     I_inv = bodies.rigid_inv_inertia[tid]
     omega = bodies.rigid_omega[tid] + dt * (I_inv @ bodies.rigid_torque[tid])
-    bodies.rigid_torque[tid] = wp.vec3(0.0, 0.0, 0.0)
+    bodies_out.rigid_torque[tid] = wp.vec3(0.0, 0.0, 0.0)
 
     q = bodies.rigid_quaternion[tid]
     dq = 0.5 * wp.quat(omega[0], omega[1], omega[2], 0.0) * q
     q = q + dt * dq
     q = wp.normalize(q)
-    bodies.rigid_quaternion[tid] = q
+    bodies_out.rigid_quaternion[tid] = q
 
     R = wp.quat_to_matrix(q)
     I0 = bodies.rigid_inertia0[tid]
     I = R @ I0 @ wp.transpose(R)
-    bodies.rigid_inertia[tid] = I
-    bodies.rigid_inv_inertia[tid] = wp.inverse(I)
+    bodies_out.rigid_inertia[tid] = I
+    bodies_out.rigid_inv_inertia[tid] = wp.inverse(I)
 
-    bodies.rigid_v[tid] = v
-    bodies.rigid_omega[tid] = omega
+    bodies_out.rigid_v[tid] = v
+    bodies_out.rigid_omega[tid] = omega
+
+@wp.kernel
+def solve_rigid_body_diff(
+    rigid_x: wp.array(dtype=wp.vec3),
+    rigid_v: wp.array(dtype=wp.vec3),
+    rigid_force: wp.array(dtype=wp.vec3),
+    rigid_mass: wp.array(dtype=wp.float32),
+    rigid_quaternion: wp.array(dtype=wp.quat),
+    rigid_omega: wp.array(dtype=wp.vec3),
+    rigid_torque: wp.array(dtype=wp.vec3),
+    rigid_inertia0: wp.array(dtype=wp.mat33),
+    rigid_inv_inertia: wp.array(dtype=wp.mat33),
+    
+    g: wp.vec3,
+    dt: float,
+    
+    rigid_x_out: wp.array(dtype=wp.vec3),
+    rigid_v_out: wp.array(dtype=wp.vec3),
+    rigid_force_out: wp.array(dtype=wp.vec3), #TODO: 检查是否有必要置0
+    rigid_quaternion_out: wp.array(dtype=wp.quat),
+    rigid_omega_out: wp.array(dtype=wp.vec3),
+    rigid_torque_out: wp.array(dtype=wp.vec3),
+    rigid_inertia_out: wp.array(dtype=wp.mat33),
+    rigid_inv_inertia_out: wp.array(dtype=wp.mat33)
+):
+    tid = wp.tid()
+
+    f = rigid_force[tid] + g * rigid_mass[tid]
+    v = rigid_v[tid] + dt * f / rigid_mass[tid]
+    rigid_force_out[tid] = wp.vec3(0.0, 0.0, 0.0)
+
+    rigid_x_out[tid] = rigid_x[tid] + dt * v
+
+    I_inv = rigid_inv_inertia[tid]
+    omega = rigid_omega[tid] + dt * (I_inv @ rigid_torque[tid])
+    rigid_torque_out[tid] = wp.vec3(0.0, 0.0, 0.0)
+
+    q = rigid_quaternion[tid]
+    dq = 0.5 * wp.quat(omega[0], omega[1], omega[2], 0.0) * q
+    q = q + dt * dq
+    q = wp.normalize(q)
+    rigid_quaternion_out[tid] = q
+
+    R = wp.quat_to_matrix(q)
+    I0 = rigid_inertia0[tid]
+    I = R @ I0 @ wp.transpose(R)
+    rigid_inertia_out[tid] = I
+    rigid_inv_inertia_out[tid] = wp.inverse(I)
+
+    rigid_v_out[tid] = v
+    rigid_omega_out[tid] = omega
 
 
 @wp.kernel
@@ -134,20 +188,9 @@ def update_rigid_particle_info(
     particles_x0: wp.array(dtype=wp.vec3),       
     object_id: wp.array(dtype=int),            
     mtr: MaterialMarks,        
-    bodies: RigidBodies                
+    bodies: RigidBodies,              
 ):
     tid = wp.tid()
-
-    # if tid == 1:
-    #     # debug: C-style print rotation matrix and quaternion
-    #     q = bodies.rigid_quaternion[1]
-    #     R = wp.quat_to_matrix(bodies.rigid_quaternion[1])
-    #     wp.printf("R: %f %f %f \n %f %f %f\n %f %f %f\n",
-    #         R[0][0], R[0][1], R[0][2],
-    #         R[1][0], R[1][1], R[1][2],
-    #         R[2][0], R[2][1], R[2][2])
-    #     wp.printf("rigid_quaternion: %f %f %f %f\n", q.x, q.y, q.z, q.w)
-
     # update dynamic rigid body particle transforms
     if is_dynamic_rigid_body(mtr, tid):
         r = object_id[tid]

@@ -246,7 +246,7 @@ class ParticleSystem:
         self.initialize_rigid_info()
         for r_obj_id in self.object_id_rigid_body:
             self.compute_rigid_mass_info(r_obj_id)
-        self.print_rigid_info()
+        # self.print_rigid_info()
 
     @ti.func
     def add_particle(self, p, obj_id, x, v, density, pressure, material, is_dynamic, color):
