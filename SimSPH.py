@@ -1,7 +1,7 @@
 from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
 from sim_utils import export_ply_points, load_ply_points
-from sph_diff_warp import *
+from sph_kernel import *
 
 import numpy as np
 import warp as wp
@@ -11,7 +11,7 @@ class SimSPH:
     def initialize(self):
         print(f"Initialized particle volumes m_V0 = {self.m_V0}")
         # ps.initialize_particle_system()
-        # TODO: 实现流固耦合必须：移植compute_rigid_rest_cm、compute_rigid_mass_info
+        # TODO: 实现流固耦合：移植compute_rigid_rest_cm、compute_rigid_mass_info
         wp.launch(
             kernel=compute_static_boundary_volume,
             dim=self.particle_max_num,
@@ -176,13 +176,13 @@ class SimSPH:
             self.rbs = RigidBodies()
             if self.num_rigid_bodies > 0:
                 self.rbs.rigid_rest_cm = wp.array(self.ps.rigid_rest_cm.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
                 self.rbs.rigid_v0      = wp.array(self.ps.rigid_v0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
+                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
+                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
                 # omegas (3-components)
-                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
                 self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
                 # quaternions (shape: n_obj x 4) -> Warp quat
                 q_np = self.ps.rigid_quaternion.to_numpy()[:self.num_objects].astype(np.float32)
@@ -242,12 +242,12 @@ class SimSPH:
             self.rbs = RigidBodies()
             if self.num_rigid_bodies > 0:
                 self.rbs.rigid_rest_cm = wp.array(self.ps.rigid_rest_cm.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
                 self.rbs.rigid_v0      = wp.array(self.ps.rigid_v0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
+                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
+                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
+                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
+                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
                 self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
                 
                 q_np = self.ps.rigid_quaternion.to_numpy()[:self.num_objects].astype(np.float32)
@@ -310,6 +310,7 @@ class SimSPH:
             
         self.x_0 = wp.array(pos, dtype=wp.vec3)
 
+        
         print("Initialization from PLY complete.")
 
     def step(self, t):
@@ -421,7 +422,11 @@ class SimSPH:
 
                     g = wp.vec3(0.0, self.gravity, 0.0)
 
-                    wp.launch(kernel=solve_rigid_body, dim=self.num_objects, inputs=[self.rbs, g, self.dt])
+                    wp.launch(
+                        kernel=solve_rigid_body,
+                        dim=self.num_objects,
+                        inputs=[self.rbs, g, self.dt, self.rbs]
+                    )
                     # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
                     wp.launch(
                         kernel=update_rigid_particle_info,

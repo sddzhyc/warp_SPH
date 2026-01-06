@@ -29,7 +29,6 @@
 ###########################################################################
 import warp as wp
 
-from kernel_func import diff_pressure_kernel, diff_viscous_kernel
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, is_dynamic_rigid_body
 # from particle_system_np import ParticleSystem
 from kernel_func import *
