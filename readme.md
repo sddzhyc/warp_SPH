@@ -1,10 +1,41 @@
-python .\run_simulation_warp.py --scene_file .\data\scenes\warp_SPH_test.json
+A SPH-based Fluid-Rigid Coupling Simulator implemented by Warp.
 
-warp_SPH_test测试Demo执行：
+## Implemented:
+
+- WCSPH Fluid simulation
+
+- two-way fluid-rigid coupling (use Ankici. 2012) 
+
+## TODO
+
+- differentable WCSPH with fluid-rigid
+
+## Installation
+
 ```
-python .\sph_diff_warp.py
+conda env create -n warp_SPH python=3.9
+conda activate warp_SPH
+pip install -r requirements.txt
 ```
 
-python .\run_simulation_warp.py --scene_file data\scenes\cartpole_on_water_large_rho.json
+## Run
+```
+python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
 
-python .\run_simulation_warp.py --scene_file data\scenes\cartpole_on_water_cubic.json
+python .\run_simulation.py --scene_file data\scenes\rigid-fluid-demo.json
+
+
+python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
+
+```
+### differentable simulation test
+```
+python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train
+
+python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train --ply_path .\ply_states\particle_object_000030.ply
+```
+## Reference
+
+### reference resopitory
+
+### Paper
