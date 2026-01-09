@@ -1,7 +1,7 @@
 import time
 from SimSPH import SimSPH
 from particle_system import ParticleSystem
-from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, solve_rigid_body_diff, update_rigid_particle_info
+from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, solve_rigid_body_diff, update_rigid_particle_info
 from sim_utils import export_ply_points
 from sph_kernel_diff import *
 
@@ -32,9 +32,11 @@ def compute_rigid_loss(
 ):
     tid = wp.tid()
 
+    if tid == 0: # 排除rigid body0（流体块）
+        return
     # Position loss per rigid body
-    # diff_pos = rigid_x[tid] - target_rigid_x[tid]
-    # l_pos = wp.dot(diff_pos, diff_pos)
+    diff_pos = rigid_x[tid] - target_rigid_x[tid]
+    l_pos = wp.dot(diff_pos, diff_pos)
     
     # Rotation loss (0.5 * ||q - tq||^2)
     q = rigid_q[tid]
@@ -43,18 +45,29 @@ def compute_rigid_loss(
     l_rot = 0.5 * (wp.dot(q, q) + wp.dot(tq, tq) - 2.0 * wp.dot(q, tq))
     
     # Combine losses (add weights here if needed)
-    total_loss = l_rot
-    # wp.printf("Rigid body %d: Rotation loss = %.9e, Total loss = %.9e\n", tid, l_rot, total_loss)
+    total_loss = l_pos
+    # wp.printf("Rigid body %d: Rotation loss = %.9e, Position loss = %.9e, Total loss = %.9e\n", tid, l_rot, l_pos, total_loss)
 
     wp.atomic_add(loss, 0, total_loss)
 
+@wp.kernel
+def assign_initial_fluid_velocity(
+    v: wp.array(dtype=wp.vec3),
+    v_fluid_val: wp.array(dtype=wp.vec3),
+    mtr: MaterialMarks
+):
+    tid = wp.tid()
+    if mtr.material[tid] == MaterialType.FLUID:
+        v[tid] = v_fluid_val[0]
+
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None):
+    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, verbose=False):
         super().__init__(config, container, stage_path, ply_path)
         self.sim_steps = sim_steps
+        self.train_rate = lr
         self.init_diff_phys(self.sim_steps)
-
+        self.init_diff_task()
 
     def init_diff_phys(self, sim_steps):
         self.sim_steps = sim_steps
@@ -85,14 +98,10 @@ class SimSPH_diff(SimSPH):
         self.loss = wp.zeros((1,), dtype=float, requires_grad=True)
         # Target (dummy for now, should be set properly)
         self.target_x = wp.zeros_like(self.x) 
-        
         # Rigid targets
         if self.num_objects > 0:
             self.target_rigid_x = wp.zeros_like(self.rbs.rigid_x)
             self.target_rigid_q = wp.zeros_like(self.rbs.rigid_quaternion)
-        
-        # Optimizer
-        self.train_rate = 0.01
 
         self.tape = wp.Tape()
         self.forward_graph = None
@@ -148,13 +157,20 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_inertia_arrays[0], self.rbs.rigid_inertia)
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
 
-            # No per-segment start buffers or saved grads required
-            
-            # Initialize optimizer for rigid body velocity
-            self.optimizer = warp.optim.Adam([self.rigid_v_arrays[0]], lr=self.train_rate)
-        else:
-            # Fallback for fluid only
-            self.optimizer = warp.optim.Adam([self.v_arrays[0]], lr=self.train_rate)
+    def init_diff_task(self):
+        if self.num_objects > 0:
+            wp.copy(self.target_rigid_x, self.rbs.rigid_x)
+            wp.copy(self.target_rigid_q, self.rbs.rigid_quaternion)
+        
+        # Initialize optimizer for rigid body velocity
+        # self.optimizer = warp.optim.Adam([self.rigid_v_arrays[0]], lr=self.train_rate)
+        # Optimize a single variable for fluid initial velocity
+        self.opt_v_fluid = wp.array([self.v.numpy()[0]], dtype=wp.vec3, requires_grad=True) # Assume first particle is fluid or representative
+
+        self.opt_var = self.opt_v_fluid
+
+        # Optimizer
+        self.optimizer = warp.optim.Adam([self.opt_var], lr=self.train_rate)
 
     def forward(self):
         self.loss.zero_()
@@ -176,26 +192,6 @@ class SimSPH_diff(SimSPH):
                     self.loss
                 ]
             )
-            
-            # wp.synchronize() # synchronize to ensure kernel finished, then print relevant arrays and loss
-            # rx = self.rigid_x_arrays[self.sim_steps].numpy()
-            # trx = self.target_rigid_x.numpy()
-            # rq = self.rigid_quaternion_arrays[self.sim_steps].numpy()
-            # trq = self.target_rigid_q.numpy()
-            # loss_val = self.loss.numpy()
-
-            # n_show = min(5, rx.shape[0])
-
-            # print("compute_rigid_loss - summary:")
-            # print(" rigid_x shape:", rx.shape, " target_rigid_x shape:", trx.shape)
-            # print(" rigid_quaternion shape:", rq.shape, " target_rigid_q shape:", trq.shape)
-            # print(" loss array shape:", loss_val.shape)
-
-            # print(" rigid_x (first rows):\n", rx[:n_show])
-            # print(" target_rigid_x (first rows):\n", trx[:n_show])
-            # print(" rigid_quaternion (first rows):\n", rq[:n_show])
-            # print(" target_rigid_q (first rows):\n", trq[:n_show])
-            # print(" loss value:", loss_val)
         else:
             wp.launch(
                 compute_loss,
@@ -203,19 +199,59 @@ class SimSPH_diff(SimSPH):
                 inputs=[self.x_arrays[self.sim_steps], self.target_x, self.loss]
             )
 
+    def clear_grad(self):
+        # 1. 重置 Tape：防止计算图在多次 backward 中累积，导致内存爆炸和错误回传
+        self.tape = wp.Tape()
+        self.tape.reset() 
+        # 2. 清零 Loss：防止上一轮 Loss 累积
+        self.loss.zero_()
+        
+        # 3. 清零优化变量（初始条件）的梯度
+        if self.opt_v_fluid.grad:
+            self.opt_v_fluid.grad.zero_()
+
+        # 4. 清零所有中间状态数组的梯度
+        # 注意：Warp 中如果数组 create 时设置了 requires_grad=True，Warp 会分配 grad 内存。
+        # 虽然 Tape reset 会清空图，但为了保险起见，清空历史梯度值防止累加
+        for arrs in [self.x_arrays, self.v_arrays, self.rho_arrays, self.pressure_arrays, self.a_arrays]:
+            for arr in arrs:
+                if arr.grad:
+                    arr.grad.zero_()
+        
+        if self.num_objects > 0:
+            for arrs in [self.rigid_x_arrays, self.rigid_v_arrays, self.rigid_omega_arrays, 
+                         self.rigid_quaternion_arrays, self.rigid_force_arrays, self.rigid_torque_arrays, 
+                         self.rigid_inertia_arrays, self.rigid_inv_inertia_arrays]:
+                for arr in arrs:
+                    if arr.grad:
+                        arr.grad.zero_()
+            
+            # 清空 rbs_buffer 中的梯度 (如果有)
+            if self.rbs_buffer.rigid_x.grad: self.rbs_buffer.rigid_x.grad.zero_()
+            if self.rbs_buffer.rigid_v.grad: self.rbs_buffer.rigid_v.grad.zero_()
+            if self.rbs_buffer.rigid_omega.grad: self.rbs_buffer.rigid_omega.grad.zero_()
+            if self.rbs_buffer.rigid_quaternion.grad: self.rbs_buffer.rigid_quaternion.grad.zero_()
+            if self.rbs_buffer.rigid_force.grad: self.rbs_buffer.rigid_force.grad.zero_()
+            if self.rbs_buffer.rigid_torque.grad: self.rbs_buffer.rigid_torque.grad.zero_()
+
+        # print("Gradients cleared.")
+        
+    
     def backward(self):
+        self.clear_grad()
+
+        # Assign initial fluid velocity from optimized variable to v_arrays[0]
+        with self.tape:
+            wp.launch(
+                kernel=assign_initial_fluid_velocity,
+                dim=self.particle_max_num,
+                inputs=[self.v_arrays[0], self.opt_v_fluid, self.materialMarks]
+            )
+
         for t in range(self.sim_steps):
             # advance state from t -> t+1
             self.step(t)
-            # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
             # print(f"Completed forward step {t+1}/{self.sim_steps}")
-
-        # self.loss.grad.fill_(1.0)
-        # print("self.rigid_quaternion_arrays[0]:", self.rigid_quaternion_arrays[0].numpy())
-        # print("self.rigid_quaternion_arrays[self.sim_steps]:", self.rigid_quaternion_arrays[self.sim_steps].numpy())
-        # print("self.rigid_quaternion_arrays[self.sim_steps].grad before backward:", self.rigid_quaternion_arrays[self.sim_steps].grad)
-        # print("target_rigid_q:", self.target_rigid_q)
-        # print("num_objects:", self.num_objects)
         with self.tape:
             if self.num_objects > 0:
                 wp.launch(
@@ -246,7 +282,7 @@ class SimSPH_diff(SimSPH):
                     adjoint=True
                 )
         wp.synchronize()  # 强制等待 GPU 完成并刷新输出
-        print("Starting backward pass...")
+        print(f"Completed forward step {t+1}/{self.sim_steps}, Starting backward pass...")
         self.tape.backward(self.loss)
         self.tape.visualize("sph_graph.dot")
 
@@ -463,7 +499,7 @@ class SimSPH_diff(SimSPH):
         #     )
         #     self.renderer.end_frame()
 
-    def export_ply_from_diff(self, series_prefix, time_step, cnt_ply):
+    def export_ply_from_diff(self, series_prefix, time_step, cnt_ply, verbose=False):
         np_pos = self.x_arrays[time_step].numpy()
         np_rho = self.rho_arrays[time_step].numpy()
         # m_V: use computed per-particle if available, else fallback to constant m_V0
@@ -517,6 +553,9 @@ class SimSPH_diff(SimSPH):
             'grad_a_y': grad_a[:,1].astype(np.float32),
             'grad_a_z': grad_a[:,2].astype(np.float32),
         })
+    
+        if verbose:
+            print(f"Exporting frame {cnt_ply} to PLY on time step {time_step}.")
 
     def rigid_grad_print(self, rigid_id, time_step):
         print(f"--- Rigid Body {rigid_id} Gradients at Step {time_step} ---")

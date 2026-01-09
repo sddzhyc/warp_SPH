@@ -3,7 +3,7 @@ import argparse
 import warp as wp
 import warp.optim
 import numpy as np
-
+import tensorboardX
 import taichi as ti 
 
 # from particle_system_np import ParticleSystem
@@ -27,13 +27,14 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_timesteps", type=int, default=3200, help="Total number of frames.")
+    parser.add_argument("--num_timesteps", type=int, default=320, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--test_gradient", action="store_true", help="Run gradient computation test.")
     parser.add_argument("--train", action="store_true", help="Run optimization training loop.")
-    parser.add_argument("--train_iters", type=int, default=1, help="Number of training iterations.")
-    parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
+    parser.add_argument("--iters", type=int, default=10, help="Number of training iterations.")
+    # parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
+    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
@@ -48,7 +49,7 @@ if __name__ == "__main__":
         fps = 60
     frame_time = 1.0 / fps
 
-    # output_interval = int(frame_time / config.get_cfg("timeStepSize"))
+    output_interval = int(frame_time / config.get_cfg("timeStepSize"))
     total_time = config.get_cfg("totalTime")
     if total_time == None:
         total_time = 10.0
@@ -57,7 +58,7 @@ if __name__ == "__main__":
     
     # if config.get_cfg("outputInterval"):
     #     output_interval = config.get_cfg("outputInterval")
-    output_interval = 10
+    # output_interval = 10
     print(f"Output interval (in steps): {output_interval}")
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
@@ -79,11 +80,10 @@ if __name__ == "__main__":
         # prepare the container before creating the simulation so SimSPH
 
         # If running visualization loop (not training/testing), we need enough steps allocated
-        sim_steps = args.sim_steps
-        if not args.train and not args.test_gradient:
-            sim_steps = args.num_timesteps
+        # sim_steps = args.sim_steps
+        sim_steps = args.num_timesteps
 
-        sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path)
+        sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr)
         # set target x/rotation for loss computation
         wp.copy(sim.target_x, sim.x)
         if sim.num_objects > 0:
@@ -95,50 +95,42 @@ if __name__ == "__main__":
             print("Target rigid quaternions:\n", sim.target_rigid_q.numpy())
 
         if args.train:
-            print(f"Starting training for {args.train_iters} iterations...")
-            
-            for i in range(args.train_iters):
-                # # forward pass (use captured graph if available)
-                # if sim.forward_graph:
-                #     wp.capture_launch(sim.forward_graph)
-                # else:
-                #     sim.forward()
+            # Initialize TensorBoard writer
+            import datetime
+            time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            log_dir = f"runs/{scene_name}_{time_str}_lr_{args.lr}"
+            writer = tensorboardX.SummaryWriter(log_dir=log_dir)
+            print(f"TensorBoard logging to {log_dir}")
 
-                # backward pass (use captured graph if available)
-                # if sim.backward_graph:
-                #     wp.capture_launch(sim.backward_graph)
-                # else:
-                print(f"grad x_arrays[{0}]:\n", sim.x_arrays[0].grad.numpy())
+            for i in range(args.iters):
+                print(f"------------Starting training for {i}/{args.iters} iterations------------")
+                # print(f"grad x_arrays[{0}]:\n", sim.x_arrays[0].grad.numpy())
                 sim.backward()
                 
                 loss_val = sim.loss.numpy()
                 print(f"Iteration {i}: Loss = {loss_val}")
+                writer.add_scalar('Loss/train', loss_val, i)
 
                 if sim.num_objects > 0:
                     # grad check
                     # print("grad rigid_v0:\n", sim.rigid_v_arrays[0].grad.numpy())
-                    for j in range(sim_steps):
-                        sim.rigid_grad_print(1, j)
-                    #     print(f"grad rigid_q{j}:\n", sim.rigid_quaternion_arrays[j].grad.numpy())
-                    #     print(f"grad rigid_v_arrays[{j}]:\n", sim.rigid_v_arrays[j].grad.numpy())
-                    #     # print(f"grad x_arrays{j}:\n", sim.x_arrays[j].grad.numpy())
-                    # print("grad rigid_omega0:\n", sim.rigid_omega_arrays[0].grad.numpy())
-                    # print(f"grad rigid_v_arrays[{0}]:\n", sim.rigid_v_arrays[0].grad.numpy())
-                    
-                    sim.optimizer.step([sim.rigid_v_arrays[0].grad])
-                    
-                else:
-                    sim.optimizer.step([sim.v_arrays[0].grad])
-                print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
+                    # for j in range(sim_steps):
+                    #     sim.rigid_grad_print(1, j)
+                    print("fluid opt_v_fluid grad:\n", sim.opt_var.grad.numpy())
+                    # sim.optimizer.step([sim.rigid_v_arrays[0].grad])
+                    sim.optimizer.step([sim.opt_var.grad])
+                    grad_fluid = sim.opt_var.grad.numpy()[0]
+                    writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
+                    writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
+                    writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
+                    writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
+
+                print("fluid opt_v_fluid after optimization:", sim.opt_var.numpy())
+                # print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
                 # if sim.num_objects > 0:
                 #     v_opt = sim.rigid_v_arrays[0].numpy()
                 #     print("Optimized rigid initial linear velocities:", v_opt)
 
-                # clear tape/grad buffers if available
-                # if sim.zero_tape_graph:
-                #     wp.capture_launch(sim.zero_tape_graph)
-                # else:
-                #     sim.tape.zero()
             
             print("Training finished. Running final simulation with optimized parameters...")
             # # Copy optimized initial state to simulation state
@@ -151,10 +143,9 @@ if __name__ == "__main__":
             #     wp.copy(sim.rbs.rigid_quaternion, sim.rigid_quaternion_arrays[0])
             print("exporting simulation data in backward")
             cnt_ply = 0
-            for time_step in range(args.sim_steps):
+            for time_step in range(args.num_timesteps):
                 if time_step % output_interval == 0:
                     if output_ply:
-                        print(f"Exporting frame {time_step} to PLY {cnt_ply} on time step {time_step}.")
                         sim.export_ply_from_diff(f'{series_prefix}', time_step, cnt_ply )
                         cnt_ply += 1
                     if output_obj:
@@ -195,7 +186,6 @@ if __name__ == "__main__":
                 # example.render()
                 if time_step % output_interval == 0:
                     if output_ply:
-                        print(f"Exporting frame {cnt_ply} to PLY on time step {time_step}.")
                         sim.export_ply_from_diff(series_prefix, time_step, cnt_ply)
                     if output_obj:
                         for r_body_id in container.object_id_rigid_body:
