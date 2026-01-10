@@ -167,11 +167,10 @@ def solve_rigid_body_diff(
 
     q = rigid_quaternion[tid]
     dq = 0.5 * wp.quat(omega[0], omega[1], omega[2], 0.0) * q
-    q = q + dt * dq
-    q = wp.normalize(q)
-    rigid_quaternion_out[tid] = q
+    q_normalized = wp.normalize(q + dt * dq)
+    rigid_quaternion_out[tid] = wp.normalize(q + dt * dq)
 
-    R = wp.quat_to_matrix(q)
+    R = wp.quat_to_matrix(q_normalized)
     I0 = rigid_inertia0[tid]
     I = R @ I0 @ wp.transpose(R)
     rigid_inertia_out[tid] = I
@@ -202,4 +201,31 @@ def update_rigid_particle_info(
         # position and velocity must use the SAME world-space lever arm to avoid artifacts
         particles_x[tid] = bodies.rigid_x[r] + x_rel_world
         particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
+        # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)
+
+@wp.kernel
+def update_rigid_particle_info_diff(
+    particles_x: wp.array(dtype=wp.vec3),        
+    particles_v: wp.array(dtype=wp.vec3),       
+    particles_x0: wp.array(dtype=wp.vec3),       
+    object_id: wp.array(dtype=int),            
+    mtr: MaterialMarks,
+    rigid_rest_cm: wp.array(dtype=wp.vec3),        
+    rigid_x: wp.array(dtype=wp.vec3),
+    rigid_quaternion: wp.array(dtype=wp.quat),
+    rigid_v: wp.array(dtype=wp.vec3),
+    rigid_omega: wp.array(dtype=wp.vec3),        
+):
+    tid = wp.tid()
+    # update dynamic rigid body particle transforms
+    if is_dynamic_rigid_body(mtr, tid):
+        r = object_id[tid]
+
+        # rest-space relative position (assumes rest orientation is identity)
+        x_rel = particles_x0[tid] - rigid_rest_cm[r]
+        R = wp.quat_to_matrix(rigid_quaternion[r])
+        x_rel_world = R @ x_rel
+        # position and velocity must use the SAME world-space lever arm to avoid artifacts
+        particles_x[tid] = rigid_x[r] + x_rel_world
+        particles_v[tid] = rigid_v[r] + wp.cross(rigid_omega[r], x_rel_world)
         # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)

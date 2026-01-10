@@ -1,7 +1,7 @@
 import time
 from SimSPH import SimSPH
 from particle_system import ParticleSystem
-from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, solve_rigid_body_diff, update_rigid_particle_info
+from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body_diff, update_rigid_particle_info_diff
 from sim_utils import export_ply_points
 from sph_kernel_diff import *
 
@@ -77,6 +77,8 @@ class SimSPH_diff(SimSPH):
         self.rho_arrays = []
         self.pressure_arrays = []
         self.a_arrays = []
+        self.viscous_forces_arrays = []
+        self.pressure_forces_arrays = []
         
         # Initialize arrays for each time step (t=0..sim_steps)
         for _ in range(self.sim_steps + 1):
@@ -85,6 +87,8 @@ class SimSPH_diff(SimSPH):
             self.rho_arrays.append(wp.zeros_like(self.rho, requires_grad=True))
             self.pressure_arrays.append(wp.zeros_like(self.pressure, requires_grad=True))
             self.a_arrays.append(wp.zeros_like(self.a, requires_grad=True))
+            self.viscous_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
+            self.pressure_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
         print(f"Initialized differentiable simulation for {self.sim_steps} steps (no segments).")
         # Copy initial state to first arrays
         wp.copy(self.x_arrays[0], self.x)
@@ -122,24 +126,6 @@ class SimSPH_diff(SimSPH):
         # No segment checkpoints or saved grads for rigid bodies
 
         if self.num_objects > 0:
-            # 初始化完整的刚体缓冲区，确保所有字段都有有效的设备数组
-            self.rbs_buffer = RigidBodies()
-            # 常量/不随步变化的字段直接共享底层数组
-            self.rbs_buffer.rigid_rest_cm = self.rbs.rigid_rest_cm
-            self.rbs_buffer.rigid_mass = self.rbs.rigid_mass
-            self.rbs_buffer.rigid_inv_mass = self.rbs.rigid_inv_mass
-            self.rbs_buffer.rigid_inertia0 = self.rbs.rigid_inertia0
-            # 需要在仿真中更新的字段先用拷贝或零数组占位，后续每步切换到逐步数组
-            self.rbs_buffer.rigid_x = wp.zeros_like(self.rbs.rigid_x, requires_grad=True)
-            self.rbs_buffer.rigid_v0 = self.rbs.rigid_v0
-            self.rbs_buffer.rigid_v = wp.zeros_like(self.rbs.rigid_v, requires_grad=True)
-            self.rbs_buffer.rigid_quaternion = wp.zeros_like(self.rbs.rigid_quaternion, requires_grad=True)
-            self.rbs_buffer.rigid_omega = wp.zeros_like(self.rbs.rigid_omega, requires_grad=True)
-            self.rbs_buffer.rigid_omega0 = self.rbs.rigid_omega0
-            self.rbs_buffer.rigid_force = wp.zeros_like(self.rbs.rigid_force, requires_grad=True)
-            self.rbs_buffer.rigid_torque = wp.zeros_like(self.rbs.rigid_torque, requires_grad=True)
-            self.rbs_buffer.rigid_inertia = wp.zeros_like(self.rbs.rigid_inertia, requires_grad=True)
-            self.rbs_buffer.rigid_inv_inertia = wp.zeros_like(self.rbs.rigid_inv_inertia, requires_grad=True)
             for _ in range(self.sim_steps + 1):
                 self.rigid_x_arrays.append(wp.zeros_like(self.rbs.rigid_x, requires_grad=True))
                 self.rigid_v_arrays.append(wp.zeros_like(self.rbs.rigid_v, requires_grad=True))
@@ -203,6 +189,7 @@ class SimSPH_diff(SimSPH):
         # 1. 重置 Tape：防止计算图在多次 backward 中累积，导致内存爆炸和错误回传
         self.tape = wp.Tape()
         self.tape.reset() 
+        self.tape.zero()
         # 2. 清零 Loss：防止上一轮 Loss 累积
         self.loss.zero_()
         
@@ -213,7 +200,8 @@ class SimSPH_diff(SimSPH):
         # 4. 清零所有中间状态数组的梯度
         # 注意：Warp 中如果数组 create 时设置了 requires_grad=True，Warp 会分配 grad 内存。
         # 虽然 Tape reset 会清空图，但为了保险起见，清空历史梯度值防止累加
-        for arrs in [self.x_arrays, self.v_arrays, self.rho_arrays, self.pressure_arrays, self.a_arrays]:
+        for arrs in [self.x_arrays, self.v_arrays, self.rho_arrays, self.pressure_arrays, self.a_arrays,
+                     self.viscous_forces_arrays, self.pressure_forces_arrays]:
             for arr in arrs:
                 if arr.grad:
                     arr.grad.zero_()
@@ -225,20 +213,25 @@ class SimSPH_diff(SimSPH):
                 for arr in arrs:
                     if arr.grad:
                         arr.grad.zero_()
-            
-            # 清空 rbs_buffer 中的梯度 (如果有)
-            if self.rbs_buffer.rigid_x.grad: self.rbs_buffer.rigid_x.grad.zero_()
-            if self.rbs_buffer.rigid_v.grad: self.rbs_buffer.rigid_v.grad.zero_()
-            if self.rbs_buffer.rigid_omega.grad: self.rbs_buffer.rigid_omega.grad.zero_()
-            if self.rbs_buffer.rigid_quaternion.grad: self.rbs_buffer.rigid_quaternion.grad.zero_()
-            if self.rbs_buffer.rigid_force.grad: self.rbs_buffer.rigid_force.grad.zero_()
-            if self.rbs_buffer.rigid_torque.grad: self.rbs_buffer.rigid_torque.grad.zero_()
-
         # print("Gradients cleared.")
         
-    
+    def reset(self):
+        # Reset initial state
+        wp.copy(self.x_arrays[0], self.x)
+        wp.copy(self.v_arrays[0], self.v)
+        wp.copy(self.rho_arrays[0], self.rho)
+
+        for t in range(0, self.sim_steps + 1):
+            self.pressure_arrays[t].zero_()
+            self.a_arrays[t].zero_()
+            self.viscous_forces_arrays[t].zero_()
+            self.pressure_forces_arrays[t].zero_()
+            self.rigid_force_arrays[t].zero_()
+            self.rigid_torque_arrays[t].zero_()
+
     def backward(self):
         self.clear_grad()
+        self.reset()
 
         # Assign initial fluid velocity from optimized variable to v_arrays[0]
         with self.tape:
@@ -278,8 +271,8 @@ class SimSPH_diff(SimSPH):
                     compute_loss,
                     dim=self.particle_max_num,
                     inputs=[self.x_arrays[self.sim_steps], self.target_x, self.loss],
-                    adj_inputs=[self.x_arrays[self.sim_steps].grad, None, self.loss.grad],
-                    adjoint=True
+                    # adj_inputs=[self.x_arrays[self.sim_steps].grad, None, self.loss.grad],
+                    # adjoint=True
                 )
         wp.synchronize()  # 强制等待 GPU 完成并刷新输出
         print(f"Completed forward step {t+1}/{self.sim_steps}, Starting backward pass...")
@@ -309,15 +302,6 @@ class SimSPH_diff(SimSPH):
                 self.rbs.rigid_torque = self.rigid_torque_arrays[t]
                 self.rbs.rigid_inertia = self.rigid_inertia_arrays[t]
                 self.rbs.rigid_inv_inertia = self.rigid_inv_inertia_arrays[t]
-
-                self.rbs_buffer.rigid_x = self.rigid_x_arrays[t+1]
-                self.rbs_buffer.rigid_v = self.rigid_v_arrays[t+1]
-                self.rbs_buffer.rigid_omega = self.rigid_omega_arrays[t+1]
-                self.rbs_buffer.rigid_quaternion = self.rigid_quaternion_arrays[t+1]
-                self.rbs_buffer.rigid_force = self.rigid_force_arrays[t+1]
-                self.rbs_buffer.rigid_torque = self.rigid_torque_arrays[t+1]
-                self.rbs_buffer.rigid_inertia = self.rigid_inertia_arrays[t+1]
-                self.rbs_buffer.rigid_inv_inertia = self.rigid_inv_inertia_arrays[t+1]
                 # for _ in range(self.sim_step_to_frame_ratio):
                 with wp.ScopedTimer("grid build", active=self.verbose):
                     # build grid
@@ -367,9 +351,9 @@ class SimSPH_diff(SimSPH):
                         self.object_id,
                         self.rbs
                     ],
-                    outputs=[self.viscous_forces]
+                    outputs=[self.viscous_forces_arrays[t]]
                 )
-
+            # with self.tape:
             with wp.ScopedTimer("compute pressure force and acceleration", active=self.verbose):
                 # get new acceleration
                 wp.launch(
@@ -390,8 +374,8 @@ class SimSPH_diff(SimSPH):
                         self.smoothing_length,
                         self.materialMarks,
                         self.m_V,
-                        self.pressure_forces,
-                        self.viscous_forces,
+                        self.pressure_forces_arrays[t],
+                        self.viscous_forces_arrays[t],
                         self.neibor_nums,
                         self.object_id,
                     ],
@@ -481,12 +465,16 @@ class SimSPH_diff(SimSPH):
                     )
                     # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
                     wp.launch(
-                        kernel=update_rigid_particle_info,
+                        kernel=update_rigid_particle_info_diff,
                         dim=self.particle_max_num,
                         inputs=[self.x_arrays[t+1], self.v_arrays[t+1], self.x_0,
                             self.object_id,
                             self.materialMarks,
-                            self.rbs_buffer,
+                            self.rbs.rigid_rest_cm,
+                            self.rigid_x_arrays[t+1],
+                            self.rigid_quaternion_arrays[t+1],
+                            self.rigid_v_arrays[t+1],
+                            self.rigid_omega_arrays[t+1],
                         ]
                     )
             self.sim_time += self.frame_dt
@@ -507,7 +495,7 @@ class SimSPH_diff(SimSPH):
         np_obj_id = self.object_id.numpy()
         # also export per-particle force diagnostics (split vec3 into scalar components)
         pf = self.pressure_arrays[time_step].numpy()
-        vf = self.viscous_forces.numpy()
+        vf = self.viscous_forces_arrays[time_step].numpy()
         np_a = self.a_arrays[time_step].numpy()
         np_v = self.v_arrays[time_step].numpy()
 
@@ -581,3 +569,35 @@ class SimSPH_diff(SimSPH):
         print_grad("Quat Grad", self.rigid_quaternion_arrays)
         print_grad("Force Grad", self.rigid_force_arrays)
         print_grad("Torque Grad", self.rigid_torque_arrays)
+
+    def print_all_rigid_grads(self):
+        """打印所有模拟步中刚体质心位置的梯度，以及力的值和梯度"""
+        print(f"=== All Rigid Body Center of Mass Gradients ({len(self.rigid_x_arrays)} steps) ===")
+        for t in range(len(self.rigid_x_arrays)):
+            # 打印刚体 1 (假设 ID 为 1)
+            target_id = 1
+            if target_id >= self.num_objects:
+                continue
+
+            grad_str = "No Grad"
+            if self.rigid_x_arrays[t].grad is not None:
+                grad_data = self.rigid_x_arrays[t].grad.numpy()
+                grad_str = f"{grad_data[target_id]}"
+            
+            print(f"Step {t:03d} | Body {target_id} X Grad: {grad_str}")
+
+        print("="*50)    
+        print(f"=== All Rigid Force Values and Gradients ({len(self.rigid_force_arrays)} steps) ===")
+        for t in range(len(self.rigid_force_arrays)):
+            target_id = 1
+            if target_id >= self.num_objects:
+                continue
+
+            force_val = self.rigid_force_arrays[t].numpy()[target_id]
+            
+            grad_str = "No Grad"
+            if self.rigid_force_arrays[t].grad is not None:
+                grad_data = self.rigid_force_arrays[t].grad.numpy()
+                grad_str = f"{grad_data[target_id]}"
+            
+            print(f"Step {t:03d} | Body {target_id} Force Val: {force_val} | Force Grad: {grad_str}")       

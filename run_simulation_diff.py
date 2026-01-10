@@ -14,6 +14,7 @@ from config_builder import SimConfig
 ti.init(arch=ti.gpu, device_memory_fraction=0.5)
 
 # wp.config.verify_autograd_array_access = True
+wp.config.verbose = True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -27,7 +28,7 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_timesteps", type=int, default=320, help="Total number of frames.")
+    parser.add_argument("--num_timesteps", type=int, default=160, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--test_gradient", action="store_true", help="Run gradient computation test.")
     parser.add_argument("--train", action="store_true", help="Run optimization training loop.")
@@ -99,8 +100,7 @@ if __name__ == "__main__":
             import datetime
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             log_dir = f"runs/{scene_name}_{time_str}_lr_{args.lr}"
-            writer = tensorboardX.SummaryWriter(log_dir=log_dir)
-            print(f"TensorBoard logging to {log_dir}")
+            writer = None
 
             for i in range(args.iters):
                 print(f"------------Starting training for {i}/{args.iters} iterations------------")
@@ -109,7 +109,6 @@ if __name__ == "__main__":
                 
                 loss_val = sim.loss.numpy()
                 print(f"Iteration {i}: Loss = {loss_val}")
-                writer.add_scalar('Loss/train', loss_val, i)
 
                 if sim.num_objects > 0:
                     # grad check
@@ -120,11 +119,18 @@ if __name__ == "__main__":
                     # sim.optimizer.step([sim.rigid_v_arrays[0].grad])
                     sim.optimizer.step([sim.opt_var.grad])
                     grad_fluid = sim.opt_var.grad.numpy()[0]
-                    writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
-                    writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
-                    writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
-                    writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
 
+                    if args.iters > 1:
+                        if writer is None: # create writer on first use
+                            writer = tensorboardX.SummaryWriter(log_dir=log_dir)
+                            print(f"TensorBoard logging to {log_dir}")
+
+                        writer.add_scalar('Loss/train', loss_val, i)
+                        writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
+                        writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
+                        writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
+                        writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
+                
                 print("fluid opt_v_fluid after optimization:", sim.opt_var.numpy())
                 # print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
                 # if sim.num_objects > 0:
@@ -156,7 +162,7 @@ if __name__ == "__main__":
                     time_step += 1
 
                 # sim.step(time_step)
-
+            # sim.print_all_rigid_grads()
         elif args.test_gradient:
             # Set target to be the initial position (trying to keep particles stationary)
             # Since initial velocity is 0, and gravity exists, they will fall.

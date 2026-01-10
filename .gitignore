@@ -218,3 +218,6 @@ __marimo__/
 *.ply
 .vscode/
 runs/
+diff_demo.py
+diff_demo*.py
+SPH_Project_ref/
