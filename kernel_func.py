@@ -1,3 +1,4 @@
+from http.client import PRECONDITION_FAILED
 import warp as wp
 
 @wp.func
@@ -57,6 +58,23 @@ def diff_pressure_kernel_cubic(
         return term_2 * term_3
     else:
         return wp.vec3()
+
+@wp.func
+def far_rigid_kernel(xyz: wp.vec3):
+    return wp.vec3(0.,0.,0.)
+
+@wp.func_grad(far_rigid_kernel)
+def adj_far_rigid_kernel(xyz: wp.vec3, adj_ret: wp.vec3):
+    d = wp.length(xyz)
+    # functional form: f(x) = x^2 / (1 + x^2)
+    soft_coeff = d * d / (1.0 + d * d)
+    
+    # Original gradient term (normalized direction)
+    normalized_xyz = xyz / (d + 1e-8)
+    # wp.printf("adj_ret: %f, %f, %f\n", adj_ret.x, adj_ret.y, adj_ret.z)
+    # wp.printf("soft_coeff: %f\n", soft_coeff)
+    # wp.adjoint[xyz] += soft_coeff * wp.cw_mul(normalized_xyz, adj_ret)
+    wp.adjoint[xyz] += soft_coeff * normalized_xyz
 
 @wp.func
 def diff_viscous_kernel(xyz: wp.vec3, v: wp.vec3, neighbor_v: wp.vec3, neighbor_rho: float, smoothing_length: float):

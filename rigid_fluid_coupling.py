@@ -1,6 +1,7 @@
 import warp as wp
 from enum import IntEnum
 from kernel_func import *
+from norm_grad_utils import norm_grad_quat, norm_grad_vec3
 
 # Used for fluid-solid distinction
 
@@ -159,7 +160,7 @@ def solve_rigid_body_diff(
     v = rigid_v[tid] + dt * f / rigid_mass[tid]
     rigid_force_out[tid] = wp.vec3(0.0, 0.0, 0.0)
 
-    rigid_x_out[tid] = rigid_x[tid] + dt * v
+    rigid_x_out[tid] = norm_grad_vec3(rigid_x[tid] + dt * v) 
 
     I_inv = rigid_inv_inertia[tid]
     omega = rigid_omega[tid] + dt * (I_inv @ rigid_torque[tid])
@@ -168,7 +169,7 @@ def solve_rigid_body_diff(
     q = rigid_quaternion[tid]
     dq = 0.5 * wp.quat(omega[0], omega[1], omega[2], 0.0) * q
     q_normalized = wp.normalize(q + dt * dq)
-    rigid_quaternion_out[tid] = wp.normalize(q + dt * dq)
+    rigid_quaternion_out[tid] = norm_grad_quat(q_normalized)
 
     R = wp.quat_to_matrix(q_normalized)
     I0 = rigid_inertia0[tid]
@@ -176,8 +177,8 @@ def solve_rigid_body_diff(
     rigid_inertia_out[tid] = I
     rigid_inv_inertia_out[tid] = wp.inverse(I)
 
-    rigid_v_out[tid] = v
-    rigid_omega_out[tid] = omega
+    rigid_v_out[tid] = norm_grad_vec3(v)
+    rigid_omega_out[tid] =norm_grad_vec3(omega)
 
 
 @wp.kernel

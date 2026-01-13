@@ -1,18 +1,3 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 ###########################################################################
 # Example Smoothed Particle Hydrodynamics
 #
@@ -30,6 +15,7 @@
 import warp as wp
 
 from kernel_func import diff_pressure_kernel, diff_viscous_kernel
+from norm_grad_utils import norm_grad_vec3
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, is_dynamic_rigid_body
 # from particle_system_np import ParticleSystem
 from kernel_func import *
@@ -69,10 +55,8 @@ def compute_density(
             if wp.length(x - particle_x[index]) > smoothing_length:
                 continue
             distance = x - particle_x[index]
-            if mtr.material[index] == MaterialType.FLUID:
-                rho += m_V[index] * cubic_kernel(distance, smoothing_length)
-            elif mtr.material[index] == MaterialType.SOLID:
-                rho += m_V[index] * cubic_kernel(distance, smoothing_length)
+
+            rho += m_V[index] * cubic_kernel(distance, smoothing_length)
         # add external potential
         particle_rho_out[i] = density_normalization * base_density * rho
         # particle_rho[i] = base_density * rho
@@ -203,11 +187,9 @@ def get_acceleration(
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
     if mtr.material[i] == MaterialType.FLUID:
-        count = wp.int32(0)
         # loop through neighbors to compute acceleration
         for index in neighbors:
             if index != i and wp.length(x - particle_x[index])  < smoothing_length:
-                count += 1
                 # get neighbor velocity
                 # neighbor_v = particle_v[index]
                 # get neighbor density and pressures
@@ -240,17 +222,13 @@ def get_acceleration(
                 #         rbs.rigid_force[r_id] += force
                 #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
-        # store neighbor count used for pressure computation
-        neibor_nums[i] = wp.cast(count, wp.int32)
-        # write per-particle pressure/viscous contributions for diagnostics
         #pressure_force = -pressure_force # TODO：cubic需要添加，而diff_pressure_kernel不需要添加（pressure_normalization_no_mass已负）
 
         # particle_viscous_force[i] = viscous_normalization * viscous_force
         # force = pressure_force + viscous_normalization * viscous_force
-        pressure_force = pressure_force * pressure_normalization_no_mass
-        particle_pressure_force[i] = pressure_force
+        particle_pressure_force[i] = pressure_force * pressure_normalization_no_mass
         # add external potential
-        particle_a_out[i] = pressure_force + particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
+        particle_a_out[i] = particle_pressure_force[i] + particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
         # particle_a[i] = pressure_force / rho + particle_viscous_force[i] / rho + wp.vec3(0.0, gravity, 0.0) # 粘性力除以密度会导致粘性力过小！！
 
 
@@ -297,6 +275,9 @@ def compute_rigid_force_torque(
         count = wp.int32(0)
         # loop through neighbors to compute acceleration
         for index in neighbors:
+            if mtr.material[index] != MaterialType.SOLID:
+                continue
+            relative_position = particle_x[index] - x
             if index != i and wp.length(x - particle_x[index])  < smoothing_length:
                 count += 1
                 # get neighbor velocity
@@ -306,26 +287,37 @@ def compute_rigid_force_torque(
                 # # neighbor_pressure = stiffness * (wp.pow(neighbor_rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
                 # neighbor_pressure = particle_p[index] 
                 # compute relative position
-                relative_position = particle_x[index] - x
                 if mtr.material[index] == MaterialType.SOLID:
                     fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
                     # fp = -base_density * m_V[index] * diff_pressure_kernel(
                         relative_position, pressure, pressure, rho, base_density, smoothing_length
                     )
+                    # fp = base_density * m_V[index] * wp.vec3(1., 1., 1.) # just for testing far rigid kernel
                     pressure_force += fp
                     if  is_dynamic_rigid_body(mtr, index):
                         r_id = object_id[index]
                         # convert contribution to a force compatible with DFSPH's convention
                         force = - fp * rho * m_V[i]
                         # force = -pressure_normalization_no_mass * fp * rho * m_V[i]
-                        rigid_force[r_id] += force
-                        rigid_torque[r_id] += wp.cross(x - rigid_x[r_id], force)
+                        wp.atomic_add(rigid_force, r_id, force)
+                        wp.atomic_add(rigid_torque, r_id, wp.cross(x - rigid_x[r_id], force))
+
+            elif wp.length(x - particle_x[index]) >= smoothing_length and is_dynamic_rigid_body(mtr, index):
+                # 远场刚体影响
+                fp = base_density * m_V[index] * far_rigid_kernel(relative_position)
+                pressure_force += fp
+
+                r_id = object_id[index]
+                # convert contribution to a force compatible with DFSPH's convention
+                force = - fp * rho * m_V[i]
+                # force = -pressure_normalization_no_mass * fp * rho * m_V[i]
+                wp.atomic_add(rigid_force, r_id, force)
+                wp.atomic_add(rigid_torque, r_id, wp.cross(x - rigid_x[r_id], force))
 
         # particle_viscous_force[i] = viscous_normalization * viscous_force
         # force = pressure_force + viscous_normalization * viscous_force
-        pressure_force = pressure_force * pressure_normalization_no_mass
         # add external potential
-        particle_a_out[i] += pressure_force
+        particle_a_out[i] += pressure_force  * pressure_normalization_no_mass
 
 @wp.kernel
 def apply_bounds(
@@ -378,7 +370,7 @@ def kick(particle_a: wp.array(dtype=wp.vec3), dt: float, particle_v: wp.array(dt
          particle_v_out: wp.array(dtype=wp.vec3)):
     tid = wp.tid()
     v = particle_v[tid]
-    particle_v_out[tid] = v + particle_a[tid] * dt
+    particle_v_out[tid] = norm_grad_vec3(v + particle_a[tid] * dt) 
 
 
 @wp.kernel
@@ -386,7 +378,7 @@ def drift(particle_x: wp.array(dtype=wp.vec3), particle_v: wp.array(dtype=wp.vec
           particle_x_out: wp.array(dtype=wp.vec3)):
     tid = wp.tid()
     x = particle_x[tid]
-    particle_x_out[tid] = x + particle_v[tid] * dt
+    particle_x_out[tid] = norm_grad_vec3(x + particle_v[tid] * dt)
 
 
 @wp.kernel

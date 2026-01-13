@@ -35,7 +35,7 @@ def compute_rigid_loss(
     if tid == 0: # 排除rigid body0（流体块）
         return
     # Position loss per rigid body
-    diff_pos = rigid_x[tid] - target_rigid_x[tid]
+    diff_pos = norm_grad_vec3(rigid_x[tid] - target_rigid_x[tid])
     l_pos = wp.dot(diff_pos, diff_pos)
     
     # Rotation loss (0.5 * ||q - tq||^2)
@@ -58,7 +58,7 @@ def assign_initial_fluid_velocity(
 ):
     tid = wp.tid()
     if mtr.material[tid] == MaterialType.FLUID:
-        v[tid] = v_fluid_val[0]
+        v[tid] = norm_grad_vec3(v_fluid_val[0])
 
 class SimSPH_diff(SimSPH):
 
@@ -353,34 +353,34 @@ class SimSPH_diff(SimSPH):
                     ],
                     outputs=[self.viscous_forces_arrays[t]]
                 )
-            # with self.tape:
-            with wp.ScopedTimer("compute pressure force and acceleration", active=self.verbose):
-                # get new acceleration
-                wp.launch(
-                    kernel=get_acceleration,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        self.x_arrays[t],
-                        self.v_arrays[t],
-                        rho_out,
-                        pressure_out,
-                        self.stiffness,
-                        self.exponent,
-                        self.base_density,
-                        self.gravity,
-                        1.0,  # cubic kernel don't need normalization
-                        self.dynamic_visc, # cubic kernel only use dynamic_visc
-                        self.smoothing_length,
-                        self.materialMarks,
-                        self.m_V,
-                        self.pressure_forces_arrays[t],
-                        self.viscous_forces_arrays[t],
-                        self.neibor_nums,
-                        self.object_id,
-                    ],
-                    outputs=[self.a_arrays[t]]
-                )
+            with self.tape:
+                with wp.ScopedTimer("compute pressure force and acceleration", active=self.verbose):
+                    # get new acceleration
+                    wp.launch(
+                        kernel=get_acceleration,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            self.x_arrays[t],
+                            self.v_arrays[t],
+                            rho_out,
+                            pressure_out,
+                            self.stiffness,
+                            self.exponent,
+                            self.base_density,
+                            self.gravity,
+                            1.0,  # cubic kernel don't need normalization
+                            self.dynamic_visc, # cubic kernel only use dynamic_visc
+                            self.smoothing_length,
+                            self.materialMarks,
+                            self.m_V,
+                            self.pressure_forces_arrays[t],
+                            self.viscous_forces_arrays[t],
+                            self.neibor_nums,
+                            self.object_id,
+                        ],
+                        outputs=[self.a_arrays[t]]
+                    )
             with self.tape:
                 with wp.ScopedTimer("compute rigid force and torque", active=self.verbose):
                     wp.launch(

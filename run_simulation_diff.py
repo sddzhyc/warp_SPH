@@ -16,6 +16,13 @@ ti.init(arch=ti.gpu, device_memory_fraction=0.5)
 # wp.config.verify_autograd_array_access = True
 wp.config.verbose = True
 
+def export_backward_data(sim, num_timesteps, output_interval, series_prefix):
+    cnt_ply = 0
+    for time_step in range(num_timesteps):
+        if time_step % output_interval == 0:
+            sim.export_ply_from_diff(f'{series_prefix}', time_step, cnt_ply )
+            cnt_ply += 1
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--scene_file',
@@ -36,6 +43,7 @@ if __name__ == "__main__":
     # parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
+    parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
@@ -99,8 +107,27 @@ if __name__ == "__main__":
             # Initialize TensorBoard writer
             import datetime
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_dir = f"runs/{scene_name}_{time_str}_lr_{args.lr}"
+            log_dir = f"runs/{scene_name}/{time_str}_lr_{args.lr}"
             writer = None
+            min_loss = float('inf')
+
+            lr_init = args.lr
+            lr_max  = 1e-1
+            lr_min  = 1e-3
+
+            warmup_steps = 200
+            ema_alpha = 0.95
+
+            plateau_patience = 50
+            plateau_decay = 0.5
+
+            rollback_tolerance = 1.2   # loss 上升超过 20%
+            best_loss = float("inf")
+            best_param = None
+
+            loss_ema = None
+            initial_loss = None
+            plateau_counter = 0
 
             for i in range(args.iters):
                 print(f"------------Starting training for {i}/{args.iters} iterations------------")
@@ -116,16 +143,39 @@ if __name__ == "__main__":
                     # for j in range(sim_steps):
                     #     sim.rigid_grad_print(1, j)
                     print("fluid opt_v_fluid grad:\n", sim.opt_var.grad.numpy())
-                    # sim.optimizer.step([sim.rigid_v_arrays[0].grad])
-                    sim.optimizer.step([sim.opt_var.grad])
-                    grad_fluid = sim.opt_var.grad.numpy()[0]
 
+                    # if initial_loss is None:
+                    #     initial_loss = loss_val
+                    #     next_decay_threshold = initial_loss * 0.5
+                    #     print(f"Initial loss: {initial_loss}, next decay at {next_decay_threshold}")
+
+                    # if loss_val < next_decay_threshold:
+                    #      old_lr = sim.optimizer.lr
+                    #      sim.optimizer.lr *= 0.5
+                    #      next_decay_threshold *= 0.5
+
+                    # ---------- 2. Warmup ----------
+                    # if i < warmup_steps:
+                    #     sim.optimizer.lr = lr_init + (lr_max - lr_init) * i / warmup_steps
+
+                    sim.optimizer.step([sim.opt_var.grad])
+                    # # ---------- 3. 记录最优 ----------
+                    # param = sim.opt_var
+                    # if loss_ema < best_loss:
+                    #     best_loss = loss_ema
+                    #     # best_param = param.clone()
+                    #     plateau_counter = 0
+                    # else:
+                    #     plateau_counter += 1
+
+                    grad_fluid = sim.opt_var.grad.numpy()[0]
                     if args.iters > 1:
                         if writer is None: # create writer on first use
                             writer = tensorboardX.SummaryWriter(log_dir=log_dir)
                             print(f"TensorBoard logging to {log_dir}")
 
                         writer.add_scalar('Loss/train', loss_val, i)
+                        writer.add_scalar('LR/train', sim.optimizer.lr, i)
                         writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
                         writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
                         writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
@@ -137,31 +187,18 @@ if __name__ == "__main__":
                 #     v_opt = sim.rigid_v_arrays[0].numpy()
                 #     print("Optimized rigid initial linear velocities:", v_opt)
 
+                # if loss_val < min_loss or args.export_all:
+                #     min_loss = loss_val
+                #     iter_dir = f"{scene_name}_diff_output/iter_{i:03d}"
+                #     os.makedirs(iter_dir, exist_ok=True)
+                #     iter_series_prefix = f"{iter_dir}/particle_object_{{:06d}}.ply"
+                #     print(f"New loss {min_loss} at iteration {i}, exporting simulation data...")
+                #     export_backward_data(sim, args.num_timesteps, output_interval, iter_series_prefix)
             
             print("Training finished. Running final simulation with optimized parameters...")
-            # # Copy optimized initial state to simulation state
-            # wp.copy(sim.x, sim.x_arrays[0])
-            # wp.copy(sim.v, sim.v_arrays[0])
-            # if sim.num_objects > 0:
-            #     wp.copy(sim.rbs.rigid_x, sim.rigid_x_arrays[0])
-            #     wp.copy(sim.rbs.rigid_v, sim.rigid_v_arrays[0])
-            #     wp.copy(sim.rbs.rigid_omega, sim.rigid_omega_arrays[0])
-            #     wp.copy(sim.rbs.rigid_quaternion, sim.rigid_quaternion_arrays[0])
-            print("exporting simulation data in backward")
-            cnt_ply = 0
-            for time_step in range(args.num_timesteps):
-                if time_step % output_interval == 0:
-                    if output_ply:
-                        sim.export_ply_from_diff(f'{series_prefix}', time_step, cnt_ply )
-                        cnt_ply += 1
-                    if output_obj:
-                        for r_body_id in container.object_id_rigid_body:
-                            with open(f"{scene_name}_output/obj_{r_body_id}_{time_step:06}.obj", "w") as f:
-                                e = container.object_collection[r_body_id]["mesh"].export(file_type='obj')
-                                f.write(e)
-                    time_step += 1
 
-                # sim.step(time_step)
+            print("exporting simulation data in backward")
+            export_backward_data(sim, args.num_timesteps, output_interval, series_prefix)
             # sim.print_all_rigid_grads()
         elif args.test_gradient:
             # Set target to be the initial position (trying to keep particles stationary)

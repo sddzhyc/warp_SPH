@@ -85,7 +85,7 @@ class SimSPH:
             print("----------------------------------------------------------------")
 
             # Grid related properties
-            self.grid_size = 2.0 * self.support_radius
+            self.grid_size = 10.0 * self.support_radius
             self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
             print("grid size: ", self.grid_num)
             self.padding = self.support_radius
