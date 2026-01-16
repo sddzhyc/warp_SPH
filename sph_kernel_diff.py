@@ -88,7 +88,7 @@ def compute_pressure(
         particle_p_out[tid] = pressure
 
 @wp.kernel
-def compute_non_presure_forces(
+def compute_non_pressure_forces(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     particle_v: wp.array(dtype=wp.vec3),
@@ -161,7 +161,7 @@ def get_acceleration(
     m_V: wp.array(dtype=float),
     particle_pressure_force: wp.array(dtype=wp.vec3),
     particle_viscous_force: wp.array(dtype=wp.vec3),
-    neibor_nums: wp.array(dtype=wp.int32),
+    debug_val: wp.array(dtype=wp.float32),
     object_id: wp.array(dtype=wp.int32),
     particle_a_out: wp.array(dtype=wp.vec3),
 ):
@@ -189,7 +189,9 @@ def get_acceleration(
     if mtr.material[i] == MaterialType.FLUID:
         # loop through neighbors to compute acceleration
         for index in neighbors:
-            if index != i and wp.length(x - particle_x[index])  < smoothing_length:
+            dis = wp.length(x - particle_x[index])
+            debug_val[i] = max(debug_val[i], wp.float32(dis / smoothing_length))
+            if index != i and dis  < smoothing_length:
                 # get neighbor velocity
                 # neighbor_v = particle_v[index]
                 # get neighbor density and pressures
@@ -201,11 +203,22 @@ def get_acceleration(
                 # compute relative position
                 relative_position = particle_x[index] - x
                 if mtr.material[index] == MaterialType.FLUID:
-                    # calculate pressure force
-                    #  pressure_force += -base_density * m_V[index] * diff_pressure_kernel(
-                    pressure_force += base_density * m_V[index] * diff_pressure_kernel_cubic(
-                        relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
-                    )
+
+                    # pressure_force += base_density * m_V[index] * diff_pressure_kernel_cubic(
+                    #     relative_position, pressure, neighbor_pressure, rho, neighbor_rho, smoothing_length
+                    # )
+
+                    # Inline diff_pressure_kernel_cubic logic
+                    # distance check for support radius
+                    d = wp.length(relative_position)
+                    if d < smoothing_length:
+                        # term_2: pressure contributions
+                        term_2 = neighbor_pressure / (neighbor_rho * neighbor_rho) + pressure / (rho * rho)
+                        # term_3: gradient of cubic kernel
+                        term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                        # accumulate pressure force contribution
+                        pressure_force += base_density * m_V[index] * term_2 * term_3
+    
                     # compute kernel derivative
                     # viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
                 # elif mtr.material[index] == MaterialType.SOLID:
@@ -245,6 +258,7 @@ def compute_rigid_force_torque(
     mtr : MaterialMarks,
     m_V: wp.array(dtype=float),
     object_id: wp.array(dtype=wp.int32),
+    debug_val: wp.array(dtype=wp.float32),
     rigid_x: wp.array(dtype=wp.vec3), # 刚体质心位置
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
@@ -288,10 +302,20 @@ def compute_rigid_force_torque(
                 # neighbor_pressure = particle_p[index] 
                 # compute relative position
                 if mtr.material[index] == MaterialType.SOLID:
-                    fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
-                    # fp = -base_density * m_V[index] * diff_pressure_kernel(
-                        relative_position, pressure, pressure, rho, base_density, smoothing_length
-                    )
+                    # fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
+                    #     relative_position, pressure, pressure, rho, base_density, smoothing_length
+                    # )
+                    d = wp.length(relative_position)
+                    debug_val[i] = max(debug_val[i], wp.float32(d / smoothing_length))                    
+                    if d < smoothing_length * (0.4):
+                        debug_val[i] = wp.float32(d / smoothing_length)
+                        wp.printf("debug_val: %f, neighbor_index: %d, distance: %f\n", debug_val[i], index, d)
+                    if d < smoothing_length:
+                        term_2 = pressure / (base_density * base_density) + pressure / (rho * rho)
+                        term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                        fp = base_density * m_V[index] * term_2 * term_3
+                    else:
+                        fp = wp.vec3()
                     # fp = base_density * m_V[index] * wp.vec3(1., 1., 1.) # just for testing far rigid kernel
                     pressure_force += fp
                     if  is_dynamic_rigid_body(mtr, index):

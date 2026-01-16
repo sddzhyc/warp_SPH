@@ -79,7 +79,8 @@ class SimSPH_diff(SimSPH):
         self.a_arrays = []
         self.viscous_forces_arrays = []
         self.pressure_forces_arrays = []
-        
+        self.debug_val_arrays = []
+
         # Initialize arrays for each time step (t=0..sim_steps)
         for _ in range(self.sim_steps + 1):
             self.x_arrays.append(wp.zeros_like(self.x, requires_grad=True))
@@ -89,6 +90,7 @@ class SimSPH_diff(SimSPH):
             self.a_arrays.append(wp.zeros_like(self.a, requires_grad=True))
             self.viscous_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
             self.pressure_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
+            self.debug_val_arrays.append(wp.zeros_like(wp.zeros(self.particle_max_num, dtype=wp.float32)))
         print(f"Initialized differentiable simulation for {self.sim_steps} steps (no segments).")
         # Copy initial state to first arrays
         wp.copy(self.x_arrays[0], self.x)
@@ -228,6 +230,7 @@ class SimSPH_diff(SimSPH):
             self.pressure_forces_arrays[t].zero_()
             self.rigid_force_arrays[t].zero_()
             self.rigid_torque_arrays[t].zero_()
+            self.debug_val_arrays[t].zero_()
 
     def backward(self):
         self.clear_grad()
@@ -336,7 +339,7 @@ class SimSPH_diff(SimSPH):
 
             with wp.ScopedTimer("compute non pressure forces", active=self.verbose):
                 wp.launch(
-                    kernel=compute_non_presure_forces,
+                    kernel=compute_non_pressure_forces,
                     dim=self.particle_max_num,
                     inputs=[
                         self.grid.id,
@@ -376,7 +379,7 @@ class SimSPH_diff(SimSPH):
                             self.m_V,
                             self.pressure_forces_arrays[t],
                             self.viscous_forces_arrays[t],
-                            self.neibor_nums,
+                            self.debug_val_arrays[t],
                             self.object_id,
                         ],
                         outputs=[self.a_arrays[t]]
@@ -398,6 +401,7 @@ class SimSPH_diff(SimSPH):
                             self.materialMarks,
                             self.m_V,
                             self.object_id,
+                            self.debug_val_arrays[t],
                             self.rigid_x_arrays[t]
                         ],
                         outputs=[
@@ -498,6 +502,7 @@ class SimSPH_diff(SimSPH):
         vf = self.viscous_forces_arrays[time_step].numpy()
         np_a = self.a_arrays[time_step].numpy()
         np_v = self.v_arrays[time_step].numpy()
+        debug_val = self.debug_val_arrays[time_step].numpy()
 
         # Gradients
         grad_x = self.x_arrays[time_step].grad.numpy()
@@ -512,7 +517,7 @@ class SimSPH_diff(SimSPH):
             'pressure': pf.astype(np.float32),
             'mV': np_mV.astype(np.float32),
             'object_id': np_obj_id.astype(np.int32),
-            'neighbor_num': self.neibor_nums.numpy().astype(np.int32),
+            'debug_val': debug_val.astype(np.float32),
             # 'pressure_fx': pf[:,0].astype(np.float32),
             # 'pressure_fy': pf[:,1].astype(np.float32),
             # 'pressure_fz': pf[:,2].astype(np.float32),

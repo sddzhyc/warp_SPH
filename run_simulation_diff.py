@@ -14,7 +14,9 @@ from config_builder import SimConfig
 ti.init(arch=ti.gpu, device_memory_fraction=0.5)
 
 # wp.config.verify_autograd_array_access = True
-wp.config.verbose = True
+wp.config.verbose = False
+warp.config.verbose_warnings = False
+warp.config.quiet = False   
 
 def export_backward_data(sim, num_timesteps, output_interval, series_prefix):
     cnt_ply = 0
