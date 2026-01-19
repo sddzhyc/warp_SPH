@@ -426,7 +426,7 @@ class SimSPH_diff_with_segment(SimSPH):
 
                     # get new acceleration
                     wp.launch(
-                        kernel=get_acceleration,
+                        kernel=compute_pressure_a,
                         dim=self.particle_max_num,
                         inputs=[
                             self.grid.id,

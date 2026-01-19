@@ -76,7 +76,7 @@ def compute_density(
         particle_rho[i] = density_normalization * base_density * rho
         # particle_rho[i] = base_density * rho
     # 密度下限设为base_density
-    # particle_rho[i] = wp.max(particle_rho[i], base_density)
+    particle_rho[i] = wp.max(particle_rho[i], base_density)
 
 @wp.kernel
 def compute_pressure(
@@ -115,7 +115,9 @@ def compute_non_presure_forces(
     base_density: float,
     particle_viscous_force: wp.array(dtype=wp.vec3),
     object_id: wp.array(dtype=wp.int32),
-    rbs :RigidBodies
+    rbs :RigidBodies,
+    gravity: float,
+    a_non_p : wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
     
@@ -157,29 +159,25 @@ def compute_non_presure_forces(
                 #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
                 
     particle_viscous_force[i] = viscous_normalization * viscous_force
+    a_non_p[i] =  particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
 
 @wp.kernel
-def get_acceleration(
+def compute_pressure_a(
     grid: wp.uint64,
     particle_x: wp.array(dtype=wp.vec3),
     particle_v: wp.array(dtype=wp.vec3),
     particle_rho: wp.array(dtype=float),
     particle_p: wp.array(dtype=float),
-    particle_a: wp.array(dtype=wp.vec3),
-    stiffness: float,
-    exponent : float,
     base_density: float,
-    gravity: float,
     pressure_normalization_no_mass: float,
-    viscous_normalization: float,
     smoothing_length: float,
     mtr : MaterialMarks,
     m_V: wp.array(dtype=float),
     particle_pressure_force: wp.array(dtype=wp.vec3),
-    particle_viscous_force: wp.array(dtype=wp.vec3),
     neibor_nums: wp.array(dtype=wp.int32),
     object_id: wp.array(dtype=wp.int32),
-    rbs :RigidBodies
+    rbs :RigidBodies,
+    particle_a: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
 
@@ -190,6 +188,7 @@ def get_acceleration(
     x = particle_x[i]
     v = particle_v[i]
     rho = particle_rho[i]
+    neibor_nums[i] = 0
     # 采用新的EOS公式计算压强 
     #pressure = stiffness * (wp.pow(rho / base_density, exponent) - 1.0)
     pressure = particle_p[i]
@@ -231,6 +230,9 @@ def get_acceleration(
                     # fp = -base_density * m_V[index] * diff_pressure_kernel(
                         relative_position, pressure, pressure, rho, base_density, smoothing_length
                     )
+                    d = wp.length(relative_position)
+                    if d < smoothing_length * (1.0 / 2.0):
+                        neibor_nums[i] = 1
                     pressure_force += fp
                     if  is_dynamic_rigid_body(mtr, index):
                         r_id = object_id[index]
@@ -241,7 +243,7 @@ def get_acceleration(
                         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
         # store neighbor count used for pressure computation
-        neibor_nums[i] = wp.cast(count, wp.int32)
+        # neibor_nums[i] = wp.cast(count, wp.int32)
         # write per-particle pressure/viscous contributions for diagnostics
         #pressure_force = -pressure_force # TODO：cubic需要添加，而diff_pressure_kernel不需要添加（pressure_normalization_no_mass已负）
 
@@ -250,7 +252,7 @@ def get_acceleration(
         pressure_force = pressure_force * pressure_normalization_no_mass
         particle_pressure_force[i] = pressure_force
         # add external potential
-        particle_a[i] = pressure_force + particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
+        particle_a[i] += pressure_force
         # particle_a[i] = pressure_force / rho + particle_viscous_force[i] / rho + wp.vec3(0.0, gravity, 0.0) # 粘性力除以密度会导致粘性力过小！！
 
 

@@ -1,3 +1,4 @@
+from IISPH_kernel import compute_aii_and_density_deviation, compute_pressure_a as compute_pressure_a_iisph, predict_velocity, update_pressure_and_compute_avg_error
 from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
 from sim_utils import export_ply_points, load_ply_points
@@ -5,6 +6,7 @@ from sph_kernel import *
 
 import numpy as np
 import warp as wp
+from sph_kernel_diff import compute_non_pressure_forces
 # optional dependency for flexible PLY export with custom attributes
 
 class SimSPH:
@@ -29,7 +31,7 @@ class SimSPH:
         print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
-    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd", ply_path=None):
+    def __init__(self, config = None, container: ParticleSystem = None, method=0, stage_path="example_sph.usd", ply_path=None):
         """
         If `container` (a `BaseContainer`) is provided, SimSPH will use the container's
         particle arrays as the source of truth. Otherwise it falls back to the original
@@ -132,6 +134,7 @@ class SimSPH:
             # self.n = 10000
             # allocate arrays and initialize
             self.x = wp.empty(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+            self.fluid_particle_num = self.particle_max_num # Assume all particles are fluid in demo
             self.v = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
             self.rho = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
             self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
@@ -156,13 +159,23 @@ class SimSPH:
             self.neibor_nums = wp.zeros(self.particle_max_num, dtype=wp.int32)
             self.pressure_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
             self.viscous_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
-
+        
+            self.USE_METHOD = method
+            if self.USE_METHOD == 1:
+                self.init_IISPH()
             self.initialize()
         # renderer
         # self.renderer = None
         # if stage_path:
         #     self.renderer = wp.render.UsdRenderer(stage_path)
 
+    def init_IISPH(self):
+        self.a_ii = wp.zeros(self.particle_max_num, dtype=float)
+        self.density_deviation = wp.zeros(self.particle_max_num, dtype=float)
+        self.last_pressure = wp.zeros(self.particle_max_num, dtype=float)
+        self.avg_density_error = wp.zeros(1, dtype=float) # Keep as array for atomic add in kernel
+
+        self.pressure_a = wp.zeros(self.particle_max_num, dtype=wp.vec3)
     def ti_to_warp(self,):
             # use container values
             # self.n = int(self.ps.particle_num.to_numpy())
@@ -231,7 +244,6 @@ class SimSPH:
         print(f"Initializing particle arrays with {num_particles} particles from PLY")
         self.particle_max_num = num_particles
 
-        # Initialize Rigid Bodies from PS if available
         if self.ps is not None:
             self.fluid_particle_num = int(self.ps.fluid_particle_num)
             self.solid_particle_num = int(self.ps.solid_particle_num)
@@ -266,6 +278,14 @@ class SimSPH:
              self.rbs = RigidBodies() # Assuming default constructor works or handles empty
              self.num_objects = 0
              self.num_rigid_bodies = 0
+             # Count fluid particles if material is available, otherwise assume all are fluid if not specified
+             if 'material' in attrs:
+                 mat = attrs['material'].astype(np.int32)
+                 self.fluid_particle_num = np.sum(mat == MaterialType.FLUID)
+                 self.solid_particle_num = np.sum(mat == MaterialType.SOLID)
+             else:
+                 self.fluid_particle_num = self.particle_max_num
+                 self.solid_particle_num = 0
         
         # Allocate basic fields
         self.x = wp.array(pos, dtype=wp.vec3, requires_grad=True)
@@ -313,6 +333,71 @@ class SimSPH:
         
         print("Initialization from PLY complete.")
 
+    def substep_WCSPH(self):
+        wp.launch(
+            kernel=compute_pressure,
+            dim=self.particle_max_num,
+            inputs=[self.rho, self.pressure, self.materialMarks,
+                    self.stiffness, self.exponent, self.base_density],
+        )
+
+    def substep_IISPH(self):
+        
+        wp.launch(
+            kernel=predict_velocity,
+            dim=self.particle_max_num,
+            inputs=[self.a, self.gravity, float(self.dt), self.materialMarks, self.v,]
+        )
+
+        wp.launch(
+            kernel=compute_aii_and_density_deviation,
+            dim=self.particle_max_num,
+            inputs=[
+                self.grid.id, self.x, self.v, self.rho, self.m_V,
+                self.materialMarks, self.smoothing_length, self.base_density, float(self.dt),
+                self.a_ii, self.density_deviation
+            ]
+        )
+        
+        # Pressure Solve
+        wp.copy(self.last_pressure, self.pressure)
+        self.pressure.zero_() 
+        
+        cnt_iter = 0
+        while cnt_iter < 1000:
+            self.avg_density_error.zero_()
+            # self.pressure_a.zero_()
+            wp.launch(
+                kernel=compute_pressure_a_iisph,
+                dim=self.particle_max_num,
+                inputs=[
+                    self.grid.id, self.x, self.rho,
+                    self.pressure, 
+                    self.m_V, self.materialMarks, self.smoothing_length, self.base_density,
+                    self.pressure_a
+                ]
+            )
+            wp.launch(
+                kernel=update_pressure_and_compute_avg_error,
+                dim=self.particle_max_num,
+                inputs=[
+                    self.grid.id, self.x, self.pressure_a, self.m_V,
+                    self.a_ii, self.density_deviation,
+                    self.pressure, 
+                    self.materialMarks, self.smoothing_length, self.base_density, float(self.dt),
+                    0.5, # omega
+                    self.avg_density_error
+                ]
+            )
+            cnt_iter += 1
+            err = self.avg_density_error.numpy()[0]
+            if err / self.fluid_particle_num < 0.001:
+                break
+
+        # Final update force for integration
+        self.a.zero_()
+        wp.copy(self.a, self.pressure_a)
+
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step"):
@@ -329,6 +414,17 @@ class SimSPH:
                         inputs=[self.grid.id, self.x, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
                                 self.materialMarks],
                     )
+
+                    wp.launch(
+                        kernel=enforce_boundary_3D_warp,
+                        dim=self.particle_max_num,
+                        inputs=[self.x, self.v,
+                                self.materialMarks,
+                                self.domain_size,
+                                self.padding,
+                        ]
+                    )
+
                     # compute density of points
                     wp.launch(
                         kernel=compute_density,
@@ -341,79 +437,54 @@ class SimSPH:
                     )
 
                     wp.launch(
-                        kernel=compute_pressure,
-                        dim=self.particle_max_num,
-                        inputs=[self.rho, self.pressure, self.materialMarks,
-                                self.stiffness, self.exponent, self.base_density],
-                    )
+                    kernel=compute_non_presure_forces,
+                    dim=self.particle_max_num,
+                    inputs=[
+                        self.grid.id,
+                        self.x,
+                        self.v,
+                        self.rho,
+                        self.dynamic_visc,
+                        self.smoothing_length,
+                        self.materialMarks,
+                        self.m_V,
+                        self.base_density,
+                        self.viscous_forces,
+                        self.object_id,
+                        self.rbs,
+                        self.gravity,
+                        self.a
+                    ],
+                )
+
+                    if self.USE_METHOD == 1:
+                        self.substep_IISPH()
+                        self.a.zero_()
+
+                    else:
+                        self.substep_WCSPH()
 
                     wp.launch(
-                        kernel=compute_non_presure_forces,
-                        dim=self.particle_max_num,
-                        inputs=[
-                            self.grid.id,
-                            self.x,
-                            self.v,
-                            self.rho,
-                            self.dynamic_visc,
-                            self.smoothing_length,
-                            self.materialMarks,
-                            self.m_V,
-                            self.base_density,
-                            self.viscous_forces,
-                            self.object_id,
-                            self.rbs
-                        ],
-                    )
-
-                    # get new acceleration
-                    wp.launch(
-                        kernel=get_acceleration,
-                        dim=self.particle_max_num,
-                        inputs=[
+                            kernel=compute_pressure_a,
+                            dim=self.particle_max_num,
+                            inputs=[
                             self.grid.id,
                             self.x,
                             self.v,
                             self.rho,
                             self.pressure,
-                            self.a,
-                            self.stiffness,
-                            self.exponent,
                             self.base_density,
-                            self.gravity,
-                            # poly6核函数相关参数
-                            # self.pressure_normalization_no_mass,
-                            # self.viscous_normalization_no_mass,
                             1.0,  # cubic kernel don't need normalization
-                            self.dynamic_visc, # cubic kernel only use dynamic_visc
                             self.smoothing_length,
                             self.materialMarks,
                             self.m_V,
                             self.pressure_forces,
-                            self.viscous_forces,
                             self.neibor_nums,
                             self.object_id,
-                            self.rbs
-                        ],
+                            self.rbs,
+                            self.a
+                            ]
                     )
-                    # self.print_rigid_info()
-                    # apply bounds
-                    # wp.launch(
-                    #     kernel=apply_bounds,
-                    #     dim=self.n,
-                    #     inputs=[self.x, self.v, self.damping_coef, self.width, self.height, self.length,
-                    #             self.materialMarks],
-                    # )
-                    wp.launch(
-                        kernel=enforce_boundary_3D_warp,
-                        dim=self.particle_max_num,
-                        inputs=[self.x, self.v,
-                                self.materialMarks,
-                                self.domain_size,
-                                self.padding,
-                        ]
-                    )
-
                     # kick
                     wp.launch(kernel=kick, dim=self.particle_max_num, inputs=[self.v, self.a, self.dt])
 
