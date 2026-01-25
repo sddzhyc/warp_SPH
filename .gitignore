@@ -223,3 +223,6 @@ diff_demo*.py
 SPH_Project_ref/
 record.txt
 runs_archive/
+plot_kernel_derivative.py
+*.dot
+*.png
