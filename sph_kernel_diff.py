@@ -235,8 +235,6 @@ def get_acceleration(
                 #         rbs.rigid_force[r_id] += force
                 #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
 
-        #pressure_force = -pressure_force # TODO：cubic需要添加，而diff_pressure_kernel不需要添加（pressure_normalization_no_mass已负）
-
         # particle_viscous_force[i] = viscous_normalization * viscous_force
         # force = pressure_force + viscous_normalization * viscous_force
         particle_pressure_force[i] = pressure_force * pressure_normalization_no_mass
@@ -281,7 +279,7 @@ def compute_rigid_force_torque(
     # store forces
     pressure_force = wp.vec3()
     # viscous_force = wp.vec3()
-
+    fixed_h = smoothing_length * 10.
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
 
@@ -292,30 +290,30 @@ def compute_rigid_force_torque(
             if mtr.material[index] != MaterialType.SOLID:
                 continue
             relative_position = particle_x[index] - x
-            if index != i and wp.length(x - particle_x[index])  < smoothing_length:
+            # if index != i and wp.length(x - particle_x[index])  < smoothing_length:
+            if index != i :
                 count += 1
-                # get neighbor velocity
-                # neighbor_v = particle_v[index]
-                # get neighbor density and pressures
-                # neighbor_rho = particle_rho[index]
-                # # neighbor_pressure = stiffness * (wp.pow(neighbor_rho / base_density, exponent) - 1.0) # TODO: 考虑存储压强以节省计算
-                # neighbor_pressure = particle_p[index] 
-                # compute relative position
                 if mtr.material[index] == MaterialType.SOLID:
                     # fp = base_density * m_V[index] * diff_pressure_kernel_cubic(
                     #     relative_position, pressure, pressure, rho, base_density, smoothing_length
                     # )
                     d = wp.length(relative_position)
                     debug_val[i] = max(debug_val[i], wp.float32(d / smoothing_length))                    
-                    if d < smoothing_length * (0.4):
+                    if d < smoothing_length * (1.0):
                         debug_val[i] = wp.float32(d / smoothing_length)
-                        wp.printf("debug_val: %f, neighbor_index: %d, distance: %f\n", debug_val[i], index, d)
-                    if d < smoothing_length:
-                        term_2 = pressure / (base_density * base_density) + pressure / (rho * rho)
-                        term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
-                        fp = base_density * m_V[index] * term_2 * term_3
-                    else:
-                        fp = wp.vec3()
+                        # wp.printf("debug_val: %f, neighbor_index: %d, distance: %f\n", debug_val[i], index, d)
+                    # if d < fixed_h:
+                    term_2 = pressure / (base_density * base_density) + pressure / (rho * rho)
+                    # term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                    term_3 = cubic_kernel_derivative(relative_position, smoothing_length)
+                    fp = base_density * m_V[index] * term_2 * term_3
+                    # else:
+                    #     # 远场刚体影响， 暂时注释掉
+                    #     fp = base_density * m_V[index] * far_rigid_kernel(relative_position)
+                    #     r_id = object_id[index]
+                    #     # convert contribution to a force compatible with DFSPH's convention
+                    #     force = - fp * rho * m_V[i]
+                    
                     # fp = base_density * m_V[index] * wp.vec3(1., 1., 1.) # just for testing far rigid kernel
                     pressure_force += fp
                     if  is_dynamic_rigid_body(mtr, index):
@@ -325,18 +323,6 @@ def compute_rigid_force_torque(
                         # force = -pressure_normalization_no_mass * fp * rho * m_V[i]
                         wp.atomic_add(rigid_force, r_id, force)
                         wp.atomic_add(rigid_torque, r_id, wp.cross(x - rigid_x[r_id], force))
-
-            elif wp.length(x - particle_x[index]) >= smoothing_length and is_dynamic_rigid_body(mtr, index):
-                # 远场刚体影响
-                fp = base_density * m_V[index] * far_rigid_kernel(relative_position)
-                pressure_force += fp
-
-                r_id = object_id[index]
-                # convert contribution to a force compatible with DFSPH's convention
-                force = - fp * rho * m_V[i]
-                # force = -pressure_normalization_no_mass * fp * rho * m_V[i]
-                wp.atomic_add(rigid_force, r_id, force)
-                wp.atomic_add(rigid_torque, r_id, wp.cross(x - rigid_x[r_id], force))
 
         # particle_viscous_force[i] = viscous_normalization * viscous_force
         # force = pressure_force + viscous_normalization * viscous_force

@@ -31,7 +31,7 @@ if __name__ == "__main__":
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
     # Robust scene name extraction for Windows/Unix paths
-    scene_name = os.path.splitext(os.path.basename(scene_path))[0]
+    scene_name = os.path.splitext(os.path.basename(scene_path))[0]+'_fixed'
 
     # export settings
     output_frames = config.get_cfg("exportFrame")
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         container = ParticleSystem(config, GGUI=True)
         # prepare the container before creating the simulation so SimSPH
 
-        example = SimSPH(config, stage_path=args.stage_path, container = container, method=1, ply_path=args.ply_path)
+        example = SimSPH(config, stage_path=args.stage_path, container = container, method=0, ply_path=args.ply_path)
         cnt = 0
         cnt_ply = 0
         for time_step in range(args.num_frames):

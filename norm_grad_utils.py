@@ -7,10 +7,10 @@ from kernel_func import wp
 def norm_grad_vec3(state_t: wp.vec3):
     return state_t
 
-@wp.func_grad(norm_grad_vec3)
+# @wp.func_grad(norm_grad_vec3) # depracated
 def adj_norm_grad_vec3(state_t: wp.vec3, adj_ret: wp.vec3):
     alpha = wp.length(adj_ret)
-    if alpha == 0.0:
+    if alpha <= 100.0:
         wp.adjoint[state_t] += adj_ret
     else:
         grad_a = adj_ret * (1.0 / (alpha))  # 归一化梯度  
@@ -21,10 +21,10 @@ def adj_norm_grad_vec3(state_t: wp.vec3, adj_ret: wp.vec3):
 def norm_grad_quat(state_t: wp.quat):
     return state_t
 
-@wp.func_grad(norm_grad_quat)
+# @wp.func_grad(norm_grad_quat) # depracated
 def adj_norm_grad_quat(state_t: wp.quat, adj_ret: wp.quat):
     alpha = wp.length(adj_ret)
-    if alpha == 0.0:
+    if alpha <= 100.0:
         wp.adjoint[state_t] += adj_ret
     else:
         grad_a = adj_ret * (1.0 / (alpha))  # 归一化梯度  
@@ -32,32 +32,19 @@ def adj_norm_grad_quat(state_t: wp.quat, adj_ret: wp.quat):
         wp.adjoint[state_t] += grad_a
 
 
-@wp.func
-def kick_step(v: wp.vec3, a: wp.vec3, dt: float):
-    return v + a * dt
+# @wp.func
+# def norm_grad_sum(state_t: wp.vec3, states_length: float):
+#     weight = 1.0 / (states_length + 1e-10)
+#     return state_t * weight
 
-@wp.func_grad(kick_step)
-def adj_kick_step(v: wp.vec3, a: wp.vec3, dt: float, adj_ret: wp.vec3):
+@wp.kernel
+def sum_L2_states_t(
+    grad_array: wp.array(dtype=wp.vec3), sum_L2_out: wp.array(dtype=float)
+):
+    tid = wp.tid()
+    wp.atomic_add(sum_L2_out, 0, wp.dot(grad_array[tid], grad_array[tid]))
 
-    grad_a = adj_ret * dt
-    alpha = wp.length(grad_a)
-
-    grad_a = grad_a * (1.0 / (alpha))  # 归一化梯度  
-
-    wp.adjoint[v] += adj_ret 
-    wp.adjoint[a] += grad_a
-
-
-@wp.func
-def drift_step(x: wp.vec3, v: wp.vec3, dt: float):
-    return x + v * dt
-
-@wp.func_grad(drift_step)
-def adj_drift_step(x: wp.vec3, v: wp.vec3, dt: float, adj_ret: wp.vec3):
-    grad_v = dt * adj_ret
-    alpha = wp.length(grad_v)
-
-    grad_v = grad_v * (1.0 / (alpha))  # 归一化梯度  
-
-    wp.adjoint[v] += adj_ret 
-    wp.adjoint[x] += grad_v
+@wp.kernel
+def norm_states_grad(states_grad: wp.array(dtype=wp.vec3), states_length: float):
+    tid = wp.tid()
+    states_grad[tid] = norm_grad_vec3(states_grad[tid]) / (states_length + 1e-10)

@@ -45,6 +45,15 @@ if __name__ == "__main__":
     # parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
+    # Grid Search Arguments
+    parser.add_argument("--grid_search_vy", action="store_true", help="Run grid search for vy.")
+    parser.add_argument("--vy_min", type=float, default=2, help="Min vy for grid search.")
+    parser.add_argument("--vy_max", type=float, default=10, help="Max vy for grid search.")
+    parser.add_argument("--vy_samples", type=int, default=40, help="Number of samples for vy.")
+    parser.add_argument("--grad_win", type=int, default=10, help="Window size for gradient averaging.")
+    parser.add_argument("--avg_grad", action="store_true", help="Use temporal averaged gradient.")
+    parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
+
     parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
     args = parser.parse_args()
 
@@ -144,7 +153,10 @@ if __name__ == "__main__":
                     # print("grad rigid_v0:\n", sim.rigid_v_arrays[0].grad.numpy())
                     # for j in range(sim_steps):
                     #     sim.rigid_grad_print(1, j)
-                    print("fluid opt_v_fluid grad:\n", sim.opt_var.grad.numpy())
+                    
+                    if args.norm_grad:
+                        sim.norm_final_grad()
+                        print("fluid opt_v_fluid grad after norm:\n", sim.opt_var.grad.numpy())
 
                     # if initial_loss is None:
                     #     initial_loss = loss_val
@@ -202,29 +214,6 @@ if __name__ == "__main__":
             print("exporting simulation data in backward")
             export_backward_data(sim, args.num_timesteps, output_interval, series_prefix)
             # sim.print_all_rigid_grads()
-        elif args.test_gradient:
-            # Set target to be the initial position (trying to keep particles stationary)
-            # Since initial velocity is 0, and gravity exists, they will fall.
-            # The optimizer should try to give them upward velocity to counteract gravity.
-            # Forward pass
-            # print(f"Running forward pass for {args.sim_steps} steps...")
-            # sim.forward()
-            # print(f"Loss: {sim.loss.numpy()[0]}")
-
-            # Backward pass
-            print("Running backward pass...")
-            sim.backward()
-
-            # Output gradients
-            # We are optimizing initial velocity v_arrays[0]
-            grad_v = sim.v_arrays[0].grad.numpy()
-            print("Gradient of initial velocity (first 10 particles):")
-            print(grad_v[:10])
-            
-            # Check for non-zero gradients
-            print(f"Max gradient magnitude: {np.max(np.abs(grad_v))}")
-            print(f"Mean gradient magnitude: {np.mean(np.abs(grad_v))}")
-
         else:
             cnt_ply = 0
             for time_step in range(args.num_timesteps):

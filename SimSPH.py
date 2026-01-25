@@ -61,8 +61,7 @@ class SimSPH:
             self.particle_radius = config.get_cfg("particleRadius")
             # self.smoothing_length = self.particle_radius     # 0.8
             self.particle_diameter = 2 * self.particle_radius
-            self.support_radius = self.particle_radius * 4.0 # move from difftaichi version
-            self.smoothing_length = self.support_radius
+            self.smoothing_length = self.particle_radius * 4.0
             # self.smoothing_length = 1.8 * self.particle_radius * 2.0 # 0.8 # 一般为排列距离的1.3到1.5倍 #taichi版本：self.support_radius = self.particle_radius * 4.0  # support radius
 
             self.stiffness = config.get_cfg("stiffness") # 20
@@ -87,10 +86,10 @@ class SimSPH:
             print("----------------------------------------------------------------")
 
             # Grid related properties
-            self.grid_size = 10.0 * self.support_radius
+            self.grid_size = 10.0 * self.smoothing_length
             self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
             print("grid size: ", self.grid_num)
-            self.padding = self.support_radius
+            self.padding = self.smoothing_length
 
             self.grid = wp.HashGrid(self.grid_num[0], self.grid_num[1], self.grid_num[2])
             # All objects id and its particle num
