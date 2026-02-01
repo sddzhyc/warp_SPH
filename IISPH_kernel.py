@@ -2,51 +2,6 @@ import warp as wp
 from kernel_func import cubic_kernel, cubic_kernel_derivative, diff_pressure_kernel_cubic, diff_viscous_kernel_cubic
 from rigid_fluid_coupling import MaterialMarks, MaterialType, is_dynamic_rigid_body
 
-@wp.kernel
-def compute_non_pressure_forces(
-    grid: wp.uint64,
-    particle_x: wp.array(dtype=wp.vec3),
-    particle_v: wp.array(dtype=wp.vec3),
-    particle_rho: wp.array(dtype=float),
-    viscous_normalization: float,
-    smoothing_length: float,
-    mtr: MaterialMarks,
-    m_V: wp.array(dtype=float),
-    base_density: float,
-    gravity: float,
-    particle_a_out: wp.array(dtype=wp.vec3)
-):
-    tid = wp.tid()
-    i = wp.hash_grid_point_id(grid, tid)
-    
-    # Initialize with gravity
-    particle_a_out[i] = wp.vec3(0.0, gravity, 0.0)
-
-    if mtr.material[i] != MaterialType.FLUID:
-        return
-
-    x = particle_x[i]
-    v = particle_v[i]
-    
-    viscous_force = wp.vec3(0.0, 0.0, 0.0)
-    
-    neighbors = wp.hash_grid_query(grid, x, smoothing_length)
-    
-    for index in neighbors:
-        if index != i:
-            d = wp.length(x - particle_x[index])
-            if d < smoothing_length:
-                # Use x_ij (x_i - x_j)
-                relative_position = x - particle_x[index]
-                
-                # Fluid viscosity
-                if mtr.material[index] == MaterialType.FLUID:
-                    viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(
-                        relative_position, v, particle_v[index], particle_rho[index], smoothing_length
-                    )
-                # Boundary viscosity (optional, can add if needed)
-
-    particle_a_out[i] += viscous_normalization * viscous_force
 
 @wp.kernel
 def predict_velocity(

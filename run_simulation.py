@@ -5,6 +5,7 @@ import warp as wp
 import taichi as ti 
 
 from SimSPH import SimSPH
+from SimDFSPH import SimDFSPH
 # from particle_system_np import ParticleSystem
 from particle_system import ParticleSystem
 from config_builder import SimConfig
@@ -53,13 +54,16 @@ if __name__ == "__main__":
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
-    series_prefix = f"{scene_name}_output/particle_object_{{:06d}}.ply"
+    method = 1
+    if method == 1:
+        scene_name+='_dfsph'
+    series_prefix = f"outputs/{scene_name}_output/particle_object_{{:06d}}.ply"
     if output_frames:
-        os.makedirs(f"{scene_name}_output_img", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name}_output_img", exist_ok=True)
     if output_ply:
-        os.makedirs(f"{scene_name}_output", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name}_output", exist_ok=True)
 
-    os.makedirs(f"{scene_name}_output", exist_ok=True)
+    os.makedirs(f"outputs/{scene_name}_output", exist_ok=True)
     simulation_method = config.get_cfg("simulationMethod")
 
     # warp_example code
@@ -68,8 +72,10 @@ if __name__ == "__main__":
     with wp.ScopedDevice(args.device):
         container = ParticleSystem(config, GGUI=True)
         # prepare the container before creating the simulation so SimSPH
-
-        example = SimSPH(config, stage_path=args.stage_path, container = container, method=0, ply_path=args.ply_path)
+        if method == 1:
+            example = SimDFSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
+        else:
+            example = SimSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
         cnt = 0
         cnt_ply = 0
         for time_step in range(args.num_frames):
@@ -80,7 +86,7 @@ if __name__ == "__main__":
                     example.export_ply(series_prefix, cnt_ply)
                 if output_obj:
                     for r_body_id in container.object_id_rigid_body:
-                        with open(f"{scene_name}_output/obj_{r_body_id}_{cnt_ply:06}.obj", "w") as f:
+                        with open(f"outputs/{scene_name}_output/obj_{r_body_id}_{cnt_ply:06}.obj", "w") as f:
                             e = container.object_collection[r_body_id]["mesh"].export(file_type='obj')
                             f.write(e)
                 cnt_ply += 1

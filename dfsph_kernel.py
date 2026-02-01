@@ -1,0 +1,240 @@
+import warp as wp
+from kernel_func import cubic_kernel_derivative
+from rigid_fluid_coupling import MaterialMarks, MaterialType
+
+@wp.kernel
+def compute_dfsph_factor_kernel(
+    grid: wp.uint64,
+    particle_x: wp.array(dtype=wp.vec3),
+    mtr: MaterialMarks,
+    m_V: wp.array(dtype=float),
+    smoothing_length: float,
+    dfsph_factor_out: wp.array(dtype=float)
+): 
+    tid = wp.tid()
+    
+    # order threads by cell
+    i = wp.hash_grid_point_id(grid, tid)
+    
+    if mtr.material[i] != MaterialType.FLUID:
+        dfsph_factor_out[i] = 0.0
+        return
+
+    # get local particle variables
+    x_i = particle_x[i]
+
+    sum_grad_p_k = float(0.0)
+    grad_p_i = wp.vec3(0.0, 0.0, 0.0)
+
+    # particle contact
+    neighbors = wp.hash_grid_query(grid, x_i, smoothing_length)
+
+    for index in neighbors:
+        if index == i:
+            continue
+            
+        r_vec = x_i - particle_x[index]
+        d = wp.length(r_vec)
+        
+        if d < smoothing_length:
+            if mtr.material[index] == MaterialType.FLUID:
+                 grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                 
+                 # grad_p_j = -m_V[j] * grad_W
+                 # Using the same convention as taichi
+                 grad_p_j = -m_V[index] * grad_W
+                 
+                 sum_grad_p_k += wp.length_sq(grad_p_j)
+                 grad_p_i -= grad_p_j # Accumulate -grad_p_j -> + m_V[j]*grad_W
+                 
+            elif mtr.material[index] == MaterialType.SOLID:
+                 grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                 grad_p_j = -m_V[index] * grad_W
+                 grad_p_i -= grad_p_j
+
+    sum_grad_p_k += wp.length_sq(grad_p_i)
+
+    if sum_grad_p_k > 1e-6:
+        dfsph_factor_out[i] = -1.0 / sum_grad_p_k # TODO: check sign
+    else:
+        dfsph_factor_out[i] = 0.0
+
+@wp.kernel
+def compute_density_adv_kernel(
+    grid: wp.uint64,
+    particle_x: wp.array(dtype=wp.vec3),
+    particle_v: wp.array(dtype=wp.vec3),
+    particle_rho: wp.array(dtype=float),
+    mtr: MaterialMarks,
+    m_V: wp.array(dtype=float),
+    smoothing_length: float,
+    dt: float,
+    base_density: float,
+    density_adv_out: wp.array(dtype=float)
+):
+    tid = wp.tid()
+    
+    # order threads by cell
+    i = wp.hash_grid_point_id(grid, tid)
+    
+    if mtr.material[i] != MaterialType.FLUID:
+        density_adv_out[i] = 0.0
+        return
+        
+    # get local particle variables
+    x_i = particle_x[i]
+    v_i = particle_v[i]
+    
+    delta = float(0.0)
+
+    # particle contact
+    neighbors = wp.hash_grid_query(grid, x_i, smoothing_length)
+
+    for index in neighbors:
+        if index == i:
+            continue
+            
+        r_vec = x_i - particle_x[index]
+        d = wp.length(r_vec)
+        
+        if d < smoothing_length:
+            v_j = particle_v[index]
+            
+            # Fluid or boundary neighbors handled same way in taichi
+            if mtr.material[index] == MaterialType.FLUID or mtr.material[index] == MaterialType.SOLID:
+                # grad_W = cubic_kernel_derivative(self.ps.x[p_i] - self.ps.x[p_j])
+                grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                
+                # delta += m_V[j] * dot(v_i - v_j, grad_W)
+                # v_ij = v_i - v_j
+                v_ij = v_i - v_j
+                term = wp.dot(v_ij, grad_W)
+                delta += m_V[index] * term
+
+    # density_adv = density[i] / density_0 + dt * delta
+    # density_adv = max(density_adv, 1.0)
+    
+    density_ratio = particle_rho[i] / base_density
+    adv_val = density_ratio + dt * delta
+    density_adv_out[i] = wp.max(adv_val, 1.0)
+
+@wp.kernel
+def compute_pressure_solve_iteration_kernel(
+    grid: wp.uint64,
+    particle_x: wp.array(dtype=wp.vec3),
+    particle_v: wp.array(dtype=wp.vec3),
+    density_adv: wp.array(dtype=float),
+    dfsph_factor: wp.array(dtype=float),
+    mtr: MaterialMarks,
+    m_V: wp.array(dtype=float),
+    smoothing_length: float,
+    dt: float,
+    base_density: float,
+    particle_v_out: wp.array(dtype=wp.vec3),
+    object_id: wp.array(dtype=wp.int32),
+    rigid_force: wp.array(dtype=wp.vec3),
+    rigid_torque: wp.array(dtype=wp.vec3),
+    rigid_x: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    
+    # order threads by cell
+    i = wp.hash_grid_point_id(grid, tid)
+    
+    if mtr.material[i] != MaterialType.FLUID:
+        # For non-fluid particles, we might not update velocity here, but we should copy it
+        particle_v_out[i] = particle_v[i]
+        return
+        
+    # get local particle variables
+    x_i = particle_x[i]
+    v_i = particle_v[i]
+    
+    # Evaluate rhs
+    # b_i = self.ps.density_adv[p_i] - 1.0
+    # k_i = b_i * self.ps.dfsph_factor[p_i]
+    # NOTE: dfpsh_factor needs to be scaled by 1/dt^2
+    inv_dt2 = 1.0 / (dt * dt)
+    
+    b_i = density_adv[i] - 1.0
+    k_i = b_i * dfsph_factor[i] * inv_dt2
+    
+    m_eps = 1e-5
+    
+    # particle contact
+    neighbors = wp.hash_grid_query(grid, x_i, smoothing_length)
+
+    vel_change_sum = wp.vec3(0.0, 0.0, 0.0)
+
+    for index in neighbors:
+        if index == i:
+            continue
+            
+        r_vec = x_i - particle_x[index]
+        d = wp.length(r_vec)
+        
+        if d < smoothing_length:
+            
+            if mtr.material[index] == MaterialType.FLUID:
+                # b_j = self.ps.density_adv[p_j] - 1.0
+                # k_j = b_j * self.ps.dfsph_factor[p_j]
+                b_j = density_adv[index] - 1.0
+                k_j = b_j * dfsph_factor[index] * inv_dt2
+                
+                # k_sum = k_i + self.density_0 / self.density_0 * k_j
+                k_sum = k_i + k_j # assuming density_0 ratio is 1
+                
+                if wp.abs(k_sum) > m_eps:
+                    grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_p_j = -m_V[index] * grad_W
+                    
+                    # self.ps.v[p_i] -= self.dt[None] * k_sum * grad_p_j
+                    force = -dt * k_sum * grad_p_j
+                    vel_change_sum += force
+
+            elif mtr.material[index] == MaterialType.SOLID:
+                 if wp.abs(k_i) > m_eps:
+                    grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_p_j = -m_V[index] * grad_W
+                    
+                    # vel_change = - self.dt[None] * 1.0 * k_i * grad_p_j
+                    vel_change = -dt * k_i * grad_p_j
+                    
+                    # self.ps.v[p_i] += vel_change
+                    vel_change_sum += vel_change 
+                    
+                    if mtr.is_dynamic[index] != 0:
+                        r_id = object_id[index]
+                        
+                        # We need density[i]
+                        rho_i = density_adv[i] * base_density # Approximate current density
+                        
+                        # force = -vel_change * (1/dt) * rho_i * m_V[i]
+                        force_rigid = -vel_change * (1.0/dt) * rho_i * m_V[i]
+                        
+                        wp.atomic_add(rigid_force, r_id, force_rigid)
+                        wp.atomic_add(rigid_torque, r_id, wp.cross(particle_x[index] - rigid_x[r_id], force_rigid))
+
+    particle_v_out[i] = v_i + vel_change_sum
+
+
+@wp.kernel
+def compute_density_error_kernel(
+    density_adv: wp.array(dtype=float),
+    mtr: MaterialMarks,
+    base_density: float,
+    error_sum: wp.array(dtype=float)
+):
+    tid = wp.tid()
+    if mtr.material[tid] == MaterialType.FLUID:
+        # Error = rho_adv * rho_0 - rho_0 
+        # But density_adv is ratio. So (ratio - 1) * rho_0.
+        # DFSPH.py: density_error += density_0 * density_adv - offset(=density_0)
+        # So it is density_0 * (density_adv - 1)
+        err = (density_adv[tid] - 1.0) * base_density
+        # Only counting positive error (compression)? DFSPH usually corrects density > rho0.
+        # In DFSPH.py: density_error += ...
+        # And density_adv is max(..., 1.0) in compute_density_adv.
+        # So density_adv >= 1.0. 
+        # So err >= 0.
+        wp.atomic_add(error_sum, 0, err)

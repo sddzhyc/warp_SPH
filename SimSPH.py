@@ -397,6 +397,73 @@ class SimSPH:
         self.a.zero_()
         wp.copy(self.a, self.pressure_a)
 
+    def sub_step(self):
+        # compute density of points
+        wp.launch(
+            kernel=compute_density,
+            dim=self.particle_max_num,
+            inputs=[self.grid.id, self.x, self.rho, 
+                    # self.density_normalization_no_mass, 
+                    1.0, # cubic kernel don't need normalization
+                    self.smoothing_length,
+                    self.materialMarks, self.m_V, self.base_density],
+        )
+
+        wp.launch(
+        kernel=compute_non_presure_forces,
+        dim=self.particle_max_num,
+        inputs=[
+            self.grid.id,
+            self.x,
+            self.v,
+            self.rho,
+            self.dynamic_visc,
+            self.smoothing_length,
+            self.materialMarks,
+            self.m_V,
+            self.base_density,
+            self.viscous_forces,
+            self.object_id,
+            self.rbs,
+            self.gravity,
+            self.a
+        ],
+    )
+
+        if self.USE_METHOD == 1:
+            self.substep_IISPH()
+            self.a.zero_()
+
+        else:
+            self.substep_WCSPH()
+
+        wp.launch(
+                kernel=compute_pressure_a,
+                dim=self.particle_max_num,
+                inputs=[
+                self.grid.id,
+                self.x,
+                self.v,
+                self.rho,
+                self.pressure,
+                self.base_density,
+                1.0,  # cubic kernel don't need normalization
+                self.smoothing_length,
+                self.materialMarks,
+                self.m_V,
+                self.pressure_forces,
+                self.neibor_nums,
+                self.object_id,
+                self.rbs,
+                self.a
+                ]
+        )
+        # kick
+        wp.launch(kernel=kick, dim=self.particle_max_num, inputs=[self.v, self.a, self.dt])
+
+        # drift
+        wp.launch(kernel=drift, dim=self.particle_max_num, inputs=[self.x, self.v, self.dt])
+
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step"):
@@ -424,72 +491,7 @@ class SimSPH:
                         ]
                     )
 
-                    # compute density of points
-                    wp.launch(
-                        kernel=compute_density,
-                        dim=self.particle_max_num,
-                        inputs=[self.grid.id, self.x, self.rho, 
-                                # self.density_normalization_no_mass, 
-                                1.0, # cubic kernel don't need normalization
-                                self.smoothing_length,
-                                self.materialMarks, self.m_V, self.base_density],
-                    )
-
-                    wp.launch(
-                    kernel=compute_non_presure_forces,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        self.x,
-                        self.v,
-                        self.rho,
-                        self.dynamic_visc,
-                        self.smoothing_length,
-                        self.materialMarks,
-                        self.m_V,
-                        self.base_density,
-                        self.viscous_forces,
-                        self.object_id,
-                        self.rbs,
-                        self.gravity,
-                        self.a
-                    ],
-                )
-
-                    if self.USE_METHOD == 1:
-                        self.substep_IISPH()
-                        self.a.zero_()
-
-                    else:
-                        self.substep_WCSPH()
-
-                    wp.launch(
-                            kernel=compute_pressure_a,
-                            dim=self.particle_max_num,
-                            inputs=[
-                            self.grid.id,
-                            self.x,
-                            self.v,
-                            self.rho,
-                            self.pressure,
-                            self.base_density,
-                            1.0,  # cubic kernel don't need normalization
-                            self.smoothing_length,
-                            self.materialMarks,
-                            self.m_V,
-                            self.pressure_forces,
-                            self.neibor_nums,
-                            self.object_id,
-                            self.rbs,
-                            self.a
-                            ]
-                    )
-                    # kick
-                    wp.launch(kernel=kick, dim=self.particle_max_num, inputs=[self.v, self.a, self.dt])
-
-                    # drift
-                    wp.launch(kernel=drift, dim=self.particle_max_num, inputs=[self.x, self.v, self.dt])
-
+                    self.sub_step()
                     g = wp.vec3(0.0, self.gravity, 0.0)
 
                     wp.launch(

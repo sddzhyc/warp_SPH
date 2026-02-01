@@ -25,7 +25,7 @@ python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
 python .\run_simulation.py --scene_file data\scenes\rigid-fluid-demo.json
 
 
-python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
+# python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
 
 ```
 ### differentable simulation test
@@ -34,6 +34,9 @@ python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train
 
 python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train --ply_path .\ply_states\particle_object_000030.ply
 ```
+
+
+python .\run_simulation_diff.py --scene_file data\scenes\diff-demo2-1.json --train --iters 700 --lr 0.005
 ## Reference
 
 ### reference resopitory
