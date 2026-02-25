@@ -1,6 +1,5 @@
 import time
 from SimSPH import SimSPH
-from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body_diff, update_rigid_particle_info_diff
 from sim_utils import export_ply_points
 from sph_kernel_diff import *
@@ -11,45 +10,8 @@ import warp as wp
 import warp.optim
 import math
 import os
-
-@wp.kernel
-def compute_loss(
-    x: wp.array(dtype=wp.vec3),
-    target_x: wp.array(dtype=wp.vec3),
-    loss: wp.array(dtype=float)
-):
-    tid = wp.tid()
-    diff = x[tid] - target_x[tid]
-    l = wp.dot(diff, diff)
-    wp.atomic_add(loss, 0, l)
-
-@wp.kernel
-def compute_rigid_loss(
-    rigid_x: wp.array(dtype=wp.vec3),
-    target_rigid_x: wp.array(dtype=wp.vec3),
-    rigid_q: wp.array(dtype=wp.quat),
-    target_rigid_q: wp.array(dtype=wp.quat),
-    loss: wp.array(dtype=float)
-):
-    tid = wp.tid()
-
-    if tid == 0: # 排除rigid body0（流体块）
-        return
-    # Position loss per rigid body
-    diff_pos = norm_grad_vec3(rigid_x[tid] - target_rigid_x[tid])
-    l_pos = wp.dot(diff_pos, diff_pos)
-    
-    # Rotation loss (0.5 * ||q - tq||^2)
-    q = rigid_q[tid]
-    tq = target_rigid_q[tid]
-    # wp.printf("Rigid body %d: q = (%.9f, %.9f, %.9f, %.9f), tq = (%.9f, %.9f, %.9f, %.9f)\n", tid, q.x, q.y, q.z, q.w, tq.x, tq.y, tq.z, tq.w)
-    l_rot = 0.5 * (wp.dot(q, q) + wp.dot(tq, tq) - 2.0 * wp.dot(q, tq))
-    
-    # Combine losses (add weights here if needed)
-    total_loss = l_pos
-    # wp.printf("Rigid body %d: Rotation loss = %.9e, Position loss = %.9e, Total loss = %.9e\n", tid, l_rot, l_pos, total_loss)
-
-    wp.atomic_add(loss, 0, total_loss)
+from diff_tasks.ball_demo_task import BallDemoTask
+from diff_tasks.skip_stone_task import SkipStoneTask
 
 @wp.kernel
 def assign_initial_fluid_velocity(
@@ -73,13 +35,15 @@ def sum_grad_fluid(
 
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container: ParticleSystem = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, verbose=False):
-        super().__init__(config, container, stage_path, ply_path)
+    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False,  verbose=False):
+        super().__init__(config, container, 0, stage_path, ply_path)
+        self.ply_path = ply_path
         self.sim_steps = sim_steps
         self.train_rate = lr
+        self.use_custom_grad = use_custom_grad
         self.init_diff_phys(self.sim_steps)
         self.init_diff_task()
-        self.smoothing_length *= 1.0
+        self.smoothing_length *= h_scale
 
     def init_diff_phys(self, sim_steps):
         self.sim_steps = sim_steps
@@ -114,12 +78,6 @@ class SimSPH_diff(SimSPH):
 
         # Loss
         self.loss = wp.zeros((1,), dtype=float, requires_grad=True)
-        # Target (dummy for now, should be set properly)
-        self.target_x = wp.zeros_like(self.x) 
-        # Rigid targets
-        if self.num_objects > 0:
-            self.target_rigid_x = wp.zeros_like(self.rbs.rigid_x)
-            self.target_rigid_q = wp.zeros_like(self.rbs.rigid_quaternion)
 
         self.tapes = [] # List of tapes for each step
         self.loss_tape = None # Tape for loss computation
@@ -159,19 +117,16 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
 
     def init_diff_task(self):
-        if self.num_objects > 0:
-            wp.copy(self.target_rigid_x, self.rbs.rigid_x)
-            wp.copy(self.target_rigid_q, self.rbs.rigid_quaternion)
-        
-        # Initialize optimizer for rigid body velocity
-        # self.optimizer = warp.optim.Adam([self.rigid_v_arrays[0]], lr=self.train_rate)
-        # Optimize a single variable for fluid initial velocity
-        self.opt_v_fluid = wp.array([self.v.numpy()[0]], dtype=wp.vec3, requires_grad=True) # Assume first particle is fluid or representative
+        # Initialize Task (which handles targets and optimizer)
+        if self.ply_path and ("skip_stone" in self.ply_path):
+            print("Initializing SkipStoneTask based on ply_path.")
+            self.task = SkipStoneTask(self)
+        else:
+            self.task = BallDemoTask(self)
+            
+        self.optimizer = self.task.optimizer
+        # self.opt_var maintained by self.opt_v_fluid set by task
 
-        self.opt_var = self.opt_v_fluid
-
-        # Optimizer
-        self.optimizer = warp.optim.Adam([self.opt_var], lr=self.train_rate)
 
     def forward(self):
         self.loss.zero_()
@@ -184,24 +139,8 @@ class SimSPH_diff(SimSPH):
         self.loss_tape = wp.Tape()
         # Compute loss
         with self.loss_tape:
-            if self.num_objects > 0:
-                wp.launch(
-                    compute_rigid_loss,
-                    dim=self.num_objects,
-                    inputs=[
-                        self.rigid_x_arrays[self.sim_steps], 
-                        self.target_rigid_x,
-                        self.rigid_quaternion_arrays[self.sim_steps],
-                        self.target_rigid_q,
-                        self.loss
-                    ]
-                )
-            else:
-                wp.launch(
-                    compute_loss,
-                    dim=self.particle_max_num,
-                    inputs=[self.x_arrays[self.sim_steps], self.target_x, self.loss]
-                )
+            self.task.compute_loss()
+
 
     def clear_grad(self):
         # 1. 重置 Tape：防止计算图在多次 backward 中累积，导致内存爆炸和错误回传
@@ -218,8 +157,8 @@ class SimSPH_diff(SimSPH):
         self.loss.zero_()
         
         # 3. 清零优化变量（初始条件）的梯度
-        if self.opt_v_fluid.grad:
-            self.opt_v_fluid.grad.zero_()
+        # Call task-specific gradient clearing
+        self.task.clear_grad()
 
         # 4. 清零所有中间状态数组的梯度
         # 注意：Warp 中如果数组 create 时设置了 requires_grad=True，Warp 会分配 grad 内存。
@@ -241,9 +180,20 @@ class SimSPH_diff(SimSPH):
         
     def reset(self):
         # Reset initial state
+        super().reset()
         wp.copy(self.x_arrays[0], self.x)
         wp.copy(self.v_arrays[0], self.v)
         wp.copy(self.rho_arrays[0], self.rho)
+        
+        if self.num_objects > 0:
+            wp.copy(self.rigid_x_arrays[0], self.rbs.rigid_x)
+            wp.copy(self.rigid_v_arrays[0], self.rbs.rigid_v)
+            wp.copy(self.rigid_omega_arrays[0], self.rbs.rigid_omega)
+            wp.copy(self.rigid_quaternion_arrays[0], self.rbs.rigid_quaternion)
+            wp.copy(self.rigid_force_arrays[0], self.rbs.rigid_force)
+            wp.copy(self.rigid_torque_arrays[0], self.rbs.rigid_torque)
+            wp.copy(self.rigid_inertia_arrays[0], self.rbs.rigid_inertia)
+            wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
 
         for t in range(0, self.sim_steps + 1):
             self.pressure_arrays[t].zero_()
@@ -283,19 +233,7 @@ class SimSPH_diff(SimSPH):
         self.reset()
         self.tapes = []
 
-        # Assign initial fluid velocity from optimized variable to v_arrays[0]
-        # This needs to be recorded too.
-        init_tape = wp.Tape()
-        with init_tape:
-            wp.launch(
-                kernel=assign_initial_fluid_velocity,
-                dim=self.particle_max_num,
-                inputs=[self.v_arrays[0], self.opt_v_fluid, self.materialMarks]
-            )
-        # We can store init_tape or just keep it separate. 
-        # Let's verify if we need it in the loop. 
-        # It connects opt_v_fluid -> v_arrays[0].
-        # We can backward it at the very end.
+        t_forward_start = time.perf_counter()
 
         for t in range(self.sim_steps):
             # advance state from t -> t+1
@@ -305,29 +243,13 @@ class SimSPH_diff(SimSPH):
         # Loss
         self.loss_tape = wp.Tape()
         with self.loss_tape:
-            if self.num_objects > 0:
-                wp.launch(
-                    compute_rigid_loss,
-                    dim=self.num_objects,
-                    inputs=[
-                        self.rigid_x_arrays[self.sim_steps], 
-                        self.target_rigid_x,
-                        self.rigid_quaternion_arrays[self.sim_steps],
-                        self.target_rigid_q,
-                    ],
-                    outputs = [self.loss],
-                )
-            else:
-                wp.launch(
-                    compute_loss,
-                    dim=self.particle_max_num,
-                    inputs=[self.x_arrays[self.sim_steps], self.target_x, self.loss],
-                    # adj_inputs=[self.x_arrays[self.sim_steps].grad, None, self.loss.grad],
-                    # adjoint=True
-                )
-        
+            self.task.compute_loss()
+
         wp.synchronize()  # 强制等待 GPU 完成并刷新输出
+        t_forward_end = time.perf_counter()
+        print(f"Forward simulation time: {t_forward_end - t_forward_start:.4f}s")
         print(f"Completed differentiable forward pass {self.sim_steps} steps, Starting backward pass...")
+        t_backward_start = time.perf_counter()
         
         # Backward Loop
         self.loss_tape.backward(self.loss)
@@ -352,8 +274,13 @@ class SimSPH_diff(SimSPH):
         self.normalize_single_state_grad(self.x_arrays[0])
         self.normalize_single_state_grad(self.v_arrays[0])
 
+        wp.synchronize()
+        t_backward_end = time.perf_counter()
+        print(f"Backward propagation time: {t_backward_end - t_backward_start:.4f}s")
+        print(f"Total backward() time: {t_backward_end - t_forward_start:.4f}s")
+
         # Backward through initialization
-        init_tape.backward()
+        # init_tape.backward()  # Removed as initialization is now handled in step(0)
         
         # Result logic...
         # self.tape.visualize("sph_graph.dot") # Cannot visualize split tapes easily as one graph
@@ -388,14 +315,11 @@ class SimSPH_diff(SimSPH):
             current_tape = wp.Tape()
             self.tapes.append(current_tape)
 
+            # Set optimized initial rigid velocities if applicable
+            self.task.init_simulation_state(t)
+
             # use state at time t as input, write results to time t+1
             x_in = self.x_arrays[t]
-            v_in = self.v_arrays[t]
-            v_out = self.v_arrays[t+1]
-            rho_out = self.rho_arrays[t+1]
-            pressure_out = self.pressure_arrays[t+1]
-            a_out = self.a_arrays[t+1]
-            
             # wp.copy(x_out, x_in)
             # wp.copy(v_out, v_in)
 
@@ -410,141 +334,36 @@ class SimSPH_diff(SimSPH):
                 self.rbs.rigid_inertia = self.rigid_inertia_arrays[t]
                 self.rbs.rigid_inv_inertia = self.rigid_inv_inertia_arrays[t]
                 # for _ in range(self.sim_step_to_frame_ratio):
-                with wp.ScopedTimer("grid build", active=self.verbose):
-                    # build grid
-                    self.grid.build(x_in, self.grid_size)
+           
+            # Common Grid Build
+            with wp.ScopedTimer("grid build", active=self.verbose):
+                # build grid
+                self.grid.build(x_in, self.grid_size)
             
-            # with current_tape:
-            with wp.ScopedTimer("forces", active=self.verbose):
-                wp.launch(
-                    kernel=compute_moving_boundary_volume,
-                    dim=self.particle_max_num,
-                    inputs=[self.grid.id, x_in, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
-                            self.materialMarks],
-                )
-            with wp.ScopedTimer("compute density", active=self.verbose):
-                # compute density of points
-                wp.launch(
-                    kernel=compute_density,
-                    dim=self.particle_max_num,
-                    inputs=[self.grid.id, self.x_arrays[t],
-                            1.0, # cubic kernel don't need normalization
-                            self.smoothing_length,
-                    self.materialMarks, self.m_V, self.base_density],
-                outputs=[rho_out]
-                )
-
-                wp.launch(
-                    kernel=compute_pressure,
-                    dim=self.particle_max_num,
-                inputs=[rho_out, self.materialMarks,
-                            self.stiffness, self.exponent, self.base_density],
-                    outputs=[pressure_out]
-                )
-
-            with wp.ScopedTimer("compute non pressure forces", active=self.verbose):
-                wp.launch(
-                    kernel=compute_non_pressure_forces,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        self.x_arrays[t],
-                        self.v_arrays[t],
-                        self.rho_arrays[t],
-                        self.dynamic_visc,
-                        self.smoothing_length,
-                        self.materialMarks,
-                        self.m_V,
-                        self.base_density,
-                        self.object_id,
-                        self.rbs
-                    ],
-                    outputs=[self.viscous_forces_arrays[t]]
-                )
-
-            with wp.ScopedTimer("compute pressure force and acceleration", active=self.verbose):
-                # get new acceleration
-                wp.launch(
-                    kernel=get_acceleration,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        self.x_arrays[t],
-                        self.v_arrays[t],
-                        rho_out,
-                        pressure_out,
-                        self.stiffness,
-                        self.exponent,
-                        self.base_density,
-                        self.gravity,
-                        1.0,  # cubic kernel don't need normalization
-                        self.dynamic_visc, # cubic kernel only use dynamic_visc
-                        self.smoothing_length,
-                        self.materialMarks,
-                        self.m_V,
-                        self.pressure_forces_arrays[t],
-                        self.viscous_forces_arrays[t],
-                        self.debug_val_arrays[t],
-                        self.object_id,
-                    ],
-                    outputs=[self.a_arrays[t]]
-                )
-            with current_tape:                
-                with wp.ScopedTimer("compute rigid force and torque", active=self.verbose):
-                    wp.launch(
-                        kernel=compute_rigid_force_torque,
-                        dim=self.particle_max_num,
-                        inputs=[
-                            self.grid.id,
-                            self.x_arrays[t],
-                            self.v_arrays[t],
-                            rho_out,
-                            pressure_out,
-                            self.base_density,
-                            1.0,  # cubic kernel don't need normalization
-                            self.smoothing_length,
-                            self.materialMarks,
-                            self.m_V,
-                            self.object_id,
-                            self.debug_val_arrays[t],
-                            self.rigid_x_arrays[t]
-                        ],
-                        outputs=[
-                            self.rigid_force_arrays[t],
-                            self.rigid_torque_arrays[t],
-                            self.a_arrays[t]]
-                    )
-
+            # Substep (Physics Solver)
+            self.sub_step(t)
+            
+            # Common Post-Processing: Boundary Handling & Rigid Body Update
+            x_out = self.x_arrays[t+1]
+            v_out = self.v_arrays[t+1]
+            
+            # Enforce boundary on t+1
             wp.launch(
-                    kernel=enforce_boundary_3D_warp,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.x_arrays[t],
-                        self.v_arrays[t],
-                            self.materialMarks,
-                            self.domain_size,
-                            self.padding,
-                    ]
+                kernel=enforce_boundary_3D_warp,
+                dim=self.particle_max_num,
+                inputs=[
+                    x_out,
+                    v_out,
+                    self.materialMarks,
+                    wp.vec3(*self.domain_start),
+                    wp.vec3(*self.domain_end),
+                    self.padding,
+                ]
             )
+            
             with current_tape:
-                with wp.ScopedTimer("advection", active=self.verbose):
-                    # kick
-                    wp.launch(
-                        kernel=kick,
-                        dim=self.particle_max_num,
-                        inputs=[self.a_arrays[t], self.dt, self.v_arrays[t]],
-                        outputs=[self.v_arrays[t+1]]
-                    )
-
-                    # drift
-                    wp.launch(
-                        kernel=drift,
-                        dim=self.particle_max_num,
-                        inputs=[self.x_arrays[t], self.v_arrays[t+1], self.dt],
-                        outputs=[self.x_arrays[t+1]]
-                    )
-
-                with wp.ScopedTimer("rigid body update", active=self.verbose):
+                # Rigid Body Update (t -> t+1)
+                if self.num_objects > 0:
                     g = wp.vec3(0.0, self.gravity, 0.0)
                     wp.launch(
                         kernel=solve_rigid_body_diff,
@@ -572,11 +391,11 @@ class SimSPH_diff(SimSPH):
                             self.rigid_inertia_arrays[t+1],
                             self.rigid_inv_inertia_arrays[t+1]]
                     )
-                    # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
+                    
                     wp.launch(
                         kernel=update_rigid_particle_info_diff,
                         dim=self.particle_max_num,
-                        inputs=[self.x_arrays[t+1], self.v_arrays[t+1], self.x_0,
+                        inputs=[x_out, v_out, self.x_0,
                             self.object_id,
                             self.materialMarks,
                             self.rbs.rigid_rest_cm,
@@ -586,7 +405,137 @@ class SimSPH_diff(SimSPH):
                             self.rigid_omega_arrays[t+1],
                         ]
                     )
+                    
             self.sim_time += self.frame_dt
+
+            # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
+
+    def sub_step(self, t):
+        current_tape = self.tapes[-1]
+        x_in = self.x_arrays[t]
+        v_in = self.v_arrays[t]
+        v_out = self.v_arrays[t+1]
+        rho_out = self.rho_arrays[t+1]
+        pressure_out = self.pressure_arrays[t+1]
+        a_out = self.a_arrays[t+1]
+        # with current_tape:
+        with wp.ScopedTimer("forces", active=self.verbose):
+            wp.launch(
+                kernel=compute_moving_boundary_volume,
+                dim=self.particle_max_num,
+                inputs=[self.grid.id, x_in, self.m_V, self.density_normalization_no_mass, self.smoothing_length,
+                        self.materialMarks],
+            )
+        with wp.ScopedTimer("compute density", active=self.verbose):
+            # compute density of points
+            wp.launch(
+                kernel=compute_density,
+                dim=self.particle_max_num,
+                inputs=[self.grid.id, self.x_arrays[t],
+                        1.0, # cubic kernel don't need normalization
+                        self.smoothing_length,
+                self.materialMarks, self.m_V, self.base_density],
+            outputs=[rho_out]
+            )
+
+            wp.launch(
+                kernel=compute_pressure,
+                dim=self.particle_max_num,
+            inputs=[rho_out, self.materialMarks,
+                        self.stiffness, self.exponent, self.base_density],
+                outputs=[pressure_out]
+            )
+
+        with wp.ScopedTimer("compute non pressure forces", active=self.verbose):
+            wp.launch(
+                kernel=compute_non_pressure_forces,
+                dim=self.particle_max_num,
+                inputs=[
+                    self.grid.id,
+                    self.x_arrays[t],
+                    self.v_arrays[t],
+                    self.rho_arrays[t],
+                    self.dynamic_visc,
+                    self.smoothing_length,
+                    self.materialMarks,
+                    self.m_V,
+                    self.base_density,
+                    self.object_id,
+                    self.rbs
+                ],
+                outputs=[self.viscous_forces_arrays[t]]
+            )
+
+        with wp.ScopedTimer("compute pressure force and acceleration", active=self.verbose):
+            # get new acceleration
+            wp.launch(
+                kernel=get_acceleration,
+                dim=self.particle_max_num,
+                inputs=[
+                    self.grid.id,
+                    self.x_arrays[t],
+                    self.v_arrays[t],
+                    rho_out,
+                    pressure_out,
+                    self.stiffness,
+                    self.exponent,
+                    self.base_density,
+                    self.gravity,
+                    1.0,  # cubic kernel don't need normalization
+                    self.dynamic_visc, # cubic kernel only use dynamic_visc
+                    self.smoothing_length,
+                    self.materialMarks,
+                    self.m_V,
+                    self.pressure_forces_arrays[t],
+                    self.viscous_forces_arrays[t],
+                    self.debug_val_arrays[t],
+                    self.object_id,
+                ],
+                outputs=[self.a_arrays[t]]
+            )
+        with current_tape:                
+            with wp.ScopedTimer("compute rigid force and torque", active=self.verbose):
+                wp.launch(
+                    kernel=compute_rigid_force_torque,
+                    dim=self.particle_max_num,
+                    inputs=[
+                        self.grid.id,
+                        self.x_arrays[t],
+                        self.v_arrays[t],
+                        rho_out,
+                        pressure_out,
+                        self.base_density,
+                        1.0,  # cubic kernel don't need normalization
+                        self.smoothing_length,
+                        self.materialMarks,
+                        self.m_V,
+                        self.object_id,
+                        self.debug_val_arrays[t],
+                        self.rigid_x_arrays[t],
+                        self.use_custom_grad,
+                    ],
+                    outputs=[
+                        self.rigid_force_arrays[t],
+                        self.rigid_torque_arrays[t],
+                        self.a_arrays[t]]
+                )
+
+            with wp.ScopedTimer("advection", active=self.verbose):
+                # kick
+                wp.launch(
+                    kernel=kick,
+                    dim=self.particle_max_num,
+                    inputs=[self.a_arrays[t], self.dt, self.v_arrays[t]],
+                    outputs=[self.v_arrays[t+1]]
+                )
+
+                # drift
+                wp.launch(
+                    kernel=drift,
+                    dim=self.particle_max_num,
+                    inputs=[self.x_arrays[t], self.v_arrays[t+1], self.dt],
+                    outputs=[self.x_arrays[t+1]]
+                )
 
             # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
         # with wp.ScopedTimer("render"):

@@ -308,7 +308,7 @@ def compute_rigid_force_torque(
                     if use_custom_grad:
                         term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
                     else:
-                    term_3 = cubic_kernel_derivative(relative_position, smoothing_length)
+                        term_3 = cubic_kernel_derivative(relative_position, smoothing_length)
                     fp = base_density * m_V[index] * term_2 * term_3
                     # else:
                     #     # 远场刚体影响， 暂时注释掉
@@ -434,7 +434,8 @@ def enforce_boundary_3D_warp(
     particle_x: wp.array(dtype=wp.vec3),
     particle_v: wp.array(dtype=wp.vec3),
     mtr : MaterialMarks,
-    domain_size: wp.vec3,
+    lower_bound: wp.vec3,
+    upper_bound: wp.vec3,
     padding: float,
 ):
     tid = wp.tid()
@@ -447,28 +448,28 @@ def enforce_boundary_3D_warp(
     collision_normal = wp.vec3(0.0, 0.0, 0.0)
 
     # x axis
-    if pos[0] > domain_size[0] - padding:
-        collision_normal = collision_normal + wp.vec3(1.0, 0.0, 0.0)
-        pos = wp.vec3(domain_size[0] - padding, pos[1], pos[2])
-    if pos[0] <= padding:
+    if pos[0] > upper_bound[0] - padding:
         collision_normal = collision_normal + wp.vec3(-1.0, 0.0, 0.0)
-        pos = wp.vec3(padding, pos[1], pos[2])
+        pos = wp.vec3(upper_bound[0] - padding, pos[1], pos[2])
+    if pos[0] < lower_bound[0] + padding:
+        collision_normal = collision_normal + wp.vec3(1.0, 0.0, 0.0)
+        pos = wp.vec3(lower_bound[0] + padding, pos[1], pos[2])
 
     # y axis
-    if pos[1] > domain_size[1] - padding:
-        collision_normal = collision_normal + wp.vec3(0.0, 1.0, 0.0)
-        pos = wp.vec3(pos[0], domain_size[1] - padding, pos[2])
-    if pos[1] <= padding:
+    if pos[1] > upper_bound[1] - padding:
         collision_normal = collision_normal + wp.vec3(0.0, -1.0, 0.0)
-        pos = wp.vec3(pos[0], padding, pos[2])
+        pos = wp.vec3(pos[0], upper_bound[1] - padding, pos[2])
+    if pos[1] < lower_bound[1] + padding:
+        collision_normal = collision_normal + wp.vec3(0.0, 1.0, 0.0)
+        pos = wp.vec3(pos[0], lower_bound[1] + padding, pos[2])
 
     # z axis
-    if pos[2] > domain_size[2] - padding:
-        collision_normal = collision_normal + wp.vec3(0.0, 0.0, 1.0)
-        pos = wp.vec3(pos[0], pos[1], domain_size[2] - padding)
-    if pos[2] <= padding:
+    if pos[2] > upper_bound[2] - padding:
         collision_normal = collision_normal + wp.vec3(0.0, 0.0, -1.0)
-        pos = wp.vec3(pos[0], pos[1], padding)
+        pos = wp.vec3(pos[0], pos[1], upper_bound[2] - padding)
+    if pos[2] < lower_bound[2] + padding:
+        collision_normal = collision_normal + wp.vec3(0.0, 0.0, 1.0)
+        pos = wp.vec3(pos[0], pos[1], lower_bound[2] + padding)
 
     # write back position
     particle_x[tid] = pos

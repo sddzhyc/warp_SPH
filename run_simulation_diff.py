@@ -1,14 +1,12 @@
 import os
 import argparse
+import argparse
 import warp as wp
 import warp.optim
 import numpy as np
 import tensorboardX
-import taichi as ti 
-
-# from particle_system_np import ParticleSystem
 from SimSPH_diff import SimSPH_diff
-from particle_system import ParticleSystem
+from SimDFSPH_diff import SimDFSPH_diff
 from config_builder import SimConfig
 from plot_utils import plot_grid_search_results, save_grid_search_to_csv
 
@@ -60,13 +58,19 @@ if __name__ == "__main__":
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
 
+    h_scale = 1
+    use_custom_grad = True
     parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
     # Robust scene name extraction for Windows/Unix paths
-    scene_name = os.path.splitext(os.path.basename(scene_path))[0]+'/h1/'
+    scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
+    if use_custom_grad:
+        scene_name += "g2_custom_h4/"
+    else:
+        scene_name += "g2/"
     if args.grid_search_vy:
         scene_name = "grid_search/" + scene_name + "_vy_{}-{}".format(args.vy_min, args.vy_max)
     if args.avg_grad:
@@ -97,11 +101,11 @@ if __name__ == "__main__":
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
-    series_prefix = f"{scene_name}_diff_output/particle_object_{{:06d}}.ply"
+    series_prefix = f"outputs/{scene_name}_diff_output/particle_object_{{:06d}}.ply"
     if output_frames:
-        os.makedirs(f"{scene_name}_output_img", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name}_output_img", exist_ok=True)
     if output_ply:
-        os.makedirs(f"{scene_name}_diff_output", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name}_diff_output", exist_ok=True)
 
     # os.makedirs(f"{scene_name}_output", exist_ok=True)
     simulation_method = config.get_cfg("simulationMethod")
@@ -110,23 +114,18 @@ if __name__ == "__main__":
     args = parser.parse_known_args()[0]
 
     with wp.ScopedDevice(args.device):
-        container = ParticleSystem(config, GGUI=True)
-        # prepare the container before creating the simulation so SimSPH
-
+        # skip Taichi container initialization
+        container = None
         # If running visualization loop (not training/testing), we need enough steps allocated
-        # sim_steps = args.sim_steps
+        # sim_steps = args.sim_steps 
         sim_steps = args.num_timesteps
 
-        sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr)
-        # set target x/rotation for loss computation
-        wp.copy(sim.target_x, sim.x)
-        if sim.num_objects > 0:
-            wp.copy(sim.target_rigid_x, sim.rbs.rigid_x)
-            target_q_np = np.zeros((sim.num_objects, 4), dtype=np.float32)
-            target_q_np[:, 3] = 1.0
-            target_q_np[1,:] = np.array([0.0, 0.7071, 0.0, 0.7071], dtype=np.float32)  # 90 degrees around Y axis
-            sim.target_rigid_q = wp.array(target_q_np, dtype=wp.quat, device=args.device)
-            print("Target rigid quaternions:\n", sim.target_rigid_q.numpy())
+        if args.method == 1:
+            sim = SimDFSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
+            h_scale=h_scale, use_custom_grad=use_custom_grad)
+        else:
+            sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
+            h_scale=h_scale, use_custom_grad=use_custom_grad)
 
         if args.grid_search_vy:
             import datetime
@@ -224,23 +223,39 @@ if __name__ == "__main__":
                     
                     if args.norm_grad:
                         sim.norm_final_grad()
-                        print("fluid opt_v_fluid grad after norm:\n", sim.opt_var.grad.numpy())
+                        if isinstance(sim.opt_var, list):
+                            print("opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
+                        else:
+                            print("fluid opt_v_fluid grad after norm:\n", sim.opt_var.grad.numpy())
 
-                    current_grad = sim.opt_var.grad.numpy().copy()
-                    print("fluid opt_v_fluid grad:\n", current_grad)
-                    if args.avg_grad:
-                        # Use helper function for temporal averaging
-                        avg_grad = compute_temporal_avg_grad(grad_buffer, current_grad, args.grad_win)
-                        
-                        print("fluid avg grad:\n", avg_grad)
-                        
-                        # Create warp array for averaged gradient
-                        avg_grad_wp = wp.array(avg_grad, dtype=sim.opt_var.dtype, device=args.device)
-                        sim.optimizer.step([avg_grad_wp])
-                        grad_fluid = avg_grad[0]
+                    if isinstance(sim.opt_var, list):
+                        current_grad = [v.grad.numpy().copy() for v in sim.opt_var]
+                        print("opt_var grad: ", current_grad)
+                        if args.avg_grad:
+                            # avg_grad not supported for list opt_var
+                            print("avg_grad not supported for list opt_var")
+                            sim.optimizer.step([v.grad for v in sim.opt_var])
+                        else:
+                            sim.optimizer.step([v.grad for v in sim.opt_var])
+                        grad_opt = [v.grad.numpy() for v in sim.opt_var]
+                        print("opt_var after optimization:", [v.numpy() for v in sim.opt_var])
                     else:
-                        sim.optimizer.step([sim.opt_var.grad])
-                        grad_fluid = sim.opt_var.grad.numpy()[0]
+                        current_grad = sim.opt_var.grad.numpy().copy()
+                        print("fluid opt_v_fluid grad: ", current_grad)
+                        if args.avg_grad:
+                            # Use helper function for temporal averaging
+                            avg_grad = compute_temporal_avg_grad(grad_buffer, current_grad, args.grad_win)
+                            
+                            print("fluid avg grad:\n", avg_grad)
+                            
+                            # Create warp array for averaged gradient
+                            avg_grad_wp = wp.array(avg_grad, dtype=sim.opt_var.dtype, device=args.device)
+                            sim.optimizer.step([avg_grad_wp])
+                            grad_fluid = avg_grad[0]
+                        else:
+                            sim.optimizer.step([sim.opt_var.grad])
+                            grad_fluid = sim.opt_var.grad.numpy()[0]
+                        print("fluid opt_v_fluid after optimization:", sim.opt_var.numpy())
 
                     if args.iters > 1:
                         if writer is None: # create writer on first use
@@ -249,13 +264,24 @@ if __name__ == "__main__":
 
                         writer.add_scalar('Loss/train', loss_val, i)
                         writer.add_scalar('LR/train', sim.optimizer.lr, i)
-                        writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
-                        writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
-                        writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
-                        writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
-                        writer.add_scalar('Grad/current_grad_fluid_y', current_grad[0][1], i)
+                        # if isinstance(sim.opt_var, list):
+                        #     grad_opt = [v.grad.numpy() for v in sim.opt_var]
+                        #     writer.add_scalar('Grad/rigid_v_norm', np.linalg.norm(grad_opt[0]), i)
+                        #     writer.add_scalar('Grad/rigid_v_x', grad_opt[0][0], i)
+                        #     writer.add_scalar('Grad/rigid_v_y', grad_opt[0][1], i)
+                        #     writer.add_scalar('Grad/rigid_v_z', grad_opt[0][2], i)
+                        #     writer.add_scalar('Grad/rigid_omega_norm', np.linalg.norm(grad_opt[1]), i)
+                        #     writer.add_scalar('Grad/rigid_omega_x', grad_opt[1][0], i)
+                        #     writer.add_scalar('Grad/rigid_omega_y', grad_opt[1][1], i)
+                        #     writer.add_scalar('Grad/rigid_omega_z', grad_opt[1][2], i)
+                        # else:
+                        #     writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
+                        #     writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
+                        #     writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
+                        #     writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
+                        #     writer.add_scalar('Grad/current_grad_fluid_y', current_grad[0][1], i)
                 
-                print("fluid opt_v_fluid after optimization:", sim.opt_var.numpy())
+                print("opt_var after optimization:", sim.opt_var.numpy() if not isinstance(sim.opt_var, list) else [v.numpy() for v in sim.opt_var])
                 # print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
                 # if sim.num_objects > 0:
                 #     v_opt = sim.rigid_v_arrays[0].numpy()
