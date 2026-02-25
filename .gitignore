@@ -226,3 +226,7 @@ runs_archive/
 plot_kernel_derivative.py
 *.dot
 *.png
+
+Balance/models_asia_v2_original/
+Balance/models_asia_v2/
+Balance/runs_asia_v2/
