@@ -23,9 +23,6 @@ def density_kernel(xyz: wp.vec3, smoothing_length: float):
 
     return wp.max(cube(square(smoothing_length) - distance), 0.0)
 
-
-# import partio
-
 @wp.func
 def diff_pressure_kernel(
     xyz: wp.vec3, pressure: float, neighbor_pressure: float, rho: float , neighbor_rho: float, smoothing_length: float
@@ -66,8 +63,9 @@ def far_rigid_kernel(xyz: wp.vec3):
 @wp.func_grad(far_rigid_kernel)
 def adj_far_rigid_kernel(xyz: wp.vec3, adj_ret: wp.vec3):
     d = wp.length(xyz)
-    # functional form: f(x) = x^2 / (1 + x^2)
-    soft_coeff = d * d / (1.0 + d * d)
+    # functional form: f(x) = x^2 / (1 + x^2) 
+    # soft_coeff = 0.001 * d * d / (1.0 + d * d)  # failed on diff-demo2 scene
+    soft_coeff = 1. * d * d / (1.0 + d * d)
     
     # Original gradient term (normalized direction)
     normalized_xyz = xyz / (d + 1e-8)
@@ -178,9 +176,9 @@ def cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
     return res
 
 
-# @wp.func_grad(cubic_kernel_derivative_custom)
+@wp.func_grad(cubic_kernel_derivative_custom)
 def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
-    h = support_radius
+    h = support_radius * 4.0
     dim = 3
     # forward replay
     k_base = 1.0
@@ -232,7 +230,7 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
         adj_r_norm += adj_q * inv_h
         adj_r += adj_r_norm * (r * inv_r_norm)
 
-    wp.adjoint[r] += adj_r
+    wp.adjoint[r] += adj_r * 0.1
 
 
 # @wp.func_replay(cubic_kernel_derivative)

@@ -54,12 +54,13 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
     # Grid Search Arguments
     parser.add_argument("--grid_search_vy", action="store_true", help="Run grid search for vy.")
-    parser.add_argument("--vy_min", type=float, default=2, help="Min vy for grid search.")
-    parser.add_argument("--vy_max", type=float, default=10, help="Max vy for grid search.")
-    parser.add_argument("--vy_samples", type=int, default=40, help="Number of samples for vy.")
+    parser.add_argument("--vy_min", type=float, default=3, help="Min vy for grid search.")
+    parser.add_argument("--vy_max", type=float, default=15, help="Max vy for grid search.")
+    parser.add_argument("--vy_samples", type=int, default=1200, help="Number of samples for vy.")
     parser.add_argument("--grad_win", type=int, default=10, help="Window size for gradient averaging.")
     parser.add_argument("--avg_grad", action="store_true", help="Use temporal averaged gradient.")
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
+    parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
 
     parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
     args = parser.parse_args()
@@ -74,6 +75,9 @@ if __name__ == "__main__":
         scene_name += "grad_win{}".format(args.grad_win)
     if args.norm_grad:
         scene_name += "_normed"
+    if args.method == 1:
+        scene_name += "_dfsph"
+
     # export settings
     output_frames = config.get_cfg("exportFrame")
     fps = config.get_cfg("fps")

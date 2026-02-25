@@ -215,7 +215,7 @@ def get_acceleration(
                         # term_2: pressure contributions
                         term_2 = neighbor_pressure / (neighbor_rho * neighbor_rho) + pressure / (rho * rho)
                         # term_3: gradient of cubic kernel
-                        term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                        term_3 = cubic_kernel_derivative(relative_position, smoothing_length)
                         # accumulate pressure force contribution
                         pressure_force += base_density * m_V[index] * term_2 * term_3
     
@@ -258,6 +258,7 @@ def compute_rigid_force_torque(
     object_id: wp.array(dtype=wp.int32),
     debug_val: wp.array(dtype=wp.float32),
     rigid_x: wp.array(dtype=wp.vec3), # 刚体质心位置
+    use_custom_grad: bool,
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
     particle_a_out: wp.array(dtype=wp.vec3),
@@ -304,7 +305,9 @@ def compute_rigid_force_torque(
                         # wp.printf("debug_val: %f, neighbor_index: %d, distance: %f\n", debug_val[i], index, d)
                     # if d < fixed_h:
                     term_2 = pressure / (base_density * base_density) + pressure / (rho * rho)
-                    # term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                    if use_custom_grad:
+                        term_3 = cubic_kernel_derivative_custom(relative_position, smoothing_length)
+                    else:
                     term_3 = cubic_kernel_derivative(relative_position, smoothing_length)
                     fp = base_density * m_V[index] * term_2 * term_3
                     # else:
