@@ -12,8 +12,6 @@ from particle_system import ParticleSystem
 from config_builder import SimConfig
 from plot_utils import plot_grid_search_results, save_grid_search_to_csv
 
-ti.init(arch=ti.gpu, device_memory_fraction=0.5)
-
 # wp.config.verify_autograd_array_access = True
 wp.config.verbose = False
 warp.config.verbose_warnings = False

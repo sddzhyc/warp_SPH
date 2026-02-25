@@ -2,15 +2,11 @@ import os
 import argparse
 import warp as wp
 
-import taichi as ti 
-
+from Balance.solid_balance_v6.PipeEnvSolver import PipeEnvSolver
 from SimSPH import SimSPH
 from SimDFSPH import SimDFSPH
-# from particle_system_np import ParticleSystem
-from particle_system import ParticleSystem
 from config_builder import SimConfig
 
-ti.init(arch=ti.gpu, device_memory_fraction=0.5)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -32,7 +28,7 @@ if __name__ == "__main__":
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
     # Robust scene name extraction for Windows/Unix paths
-    scene_name = os.path.splitext(os.path.basename(scene_path))[0]+'_fixed'
+    scene_name = os.path.splitext(os.path.basename(scene_path))[0] # +'_fixed'
 
     # export settings
     output_frames = config.get_cfg("exportFrame")
@@ -54,7 +50,7 @@ if __name__ == "__main__":
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
-    method = 1
+    method = 0
     if method == 1:
         scene_name+='_dfsph'
     series_prefix = f"outputs/{scene_name}_output/particle_object_{{:06d}}.ply"
@@ -68,12 +64,18 @@ if __name__ == "__main__":
 
     # warp_example code
     args = parser.parse_known_args()[0]
-
-    with wp.ScopedDevice(args.device):
+    use_taichi_init = False
+    if use_taichi_init:
+        import taichi as ti
+        from particle_system import ParticleSystem
+        ti.init(arch=ti.gpu, device_memory_fraction=0.5)
         container = ParticleSystem(config, GGUI=True)
+    else:
+        container = None
+    with wp.ScopedDevice(args.device):
         # prepare the container before creating the simulation so SimSPH
         if method == 1:
-            example = SimDFSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
+            example = PipeEnvSolver(config, container = None, ply_path=args.ply_path)
         else:
             example = SimSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
         cnt = 0

@@ -38,7 +38,7 @@ class SimDFSPH(SimSPH):
         
         # We rewrite data flow relevant to fluid solver logic.
         
-        with wp.ScopedTimer("step_dfsph"):
+        with wp.ScopedTimer("step_dfsph", active=self.verbose):
             
             # 2. Rigid body update (Coupling) - Pre-step
             # (Assuming RigidBodies logic is handled or we rely on SimSPH utils)

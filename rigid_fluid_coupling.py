@@ -94,7 +94,161 @@ def compute_moving_boundary_volume(
         # rho *= density_normalization_no_mass
         m_V[i] = 1.0 / rho * 3.0  # TODO: the 3.0 here is a coefficient for missing particles by trail and error... need to figure out how to determine it sophisticatedly
 
-#TODO: 实现 compute_rigid_rest_cm、compute_rigid_mass_info
+@wp.kernel
+def compute_rigid_cm_mass_kernel(
+    object_id: wp.array(dtype=int),
+    x: wp.array(dtype=wp.vec3),
+    m_V: wp.array(dtype=float),
+    rho: wp.array(dtype=float),
+    rigid_mass: wp.array(dtype=float),
+    rigid_rest_cm: wp.array(dtype=wp.vec3),
+    m_V0: float
+):
+    tid = wp.tid()
+    obj_id = object_id[tid]
+    
+    vol = m_V[tid]
+    if vol == 0.0:
+        vol = m_V0
+
+    mass = m_V0 * rho[tid]
+    wp.atomic_add(rigid_mass, obj_id, mass)
+    
+    pos = x[tid]
+    pos_mass = pos * mass
+    
+    wp.atomic_add(rigid_rest_cm, obj_id, pos_mass)
+
+@wp.kernel
+def finalize_rigid_cm_kernel(
+    rigid_mass: wp.array(dtype=float),
+    rigid_rest_cm: wp.array(dtype=wp.vec3),
+    num_objects: int
+):
+    tid = wp.tid()
+    if tid < num_objects:
+        mass = rigid_mass[tid]
+        if mass > 0.0:
+            sum_pos = rigid_rest_cm[tid]
+            rigid_rest_cm[tid] = sum_pos / mass
+        else:
+            rigid_rest_cm[tid] = wp.vec3(0.0, 0.0, 0.0)
+
+@wp.kernel
+def compute_rigid_inertia_kernel(
+    object_id: wp.array(dtype=int),
+    x: wp.array(dtype=wp.vec3),
+    m_V: wp.array(dtype=float),
+    rho: wp.array(dtype=float),
+    rigid_rest_cm: wp.array(dtype=wp.vec3),
+    rigid_inertia_accum_flat: wp.array(dtype=float), # Flattened 3x3 per object -> 9 floats
+    m_V0: float
+):
+    tid = wp.tid()
+    obj_id = object_id[tid]
+    
+    # vol = m_V[tid]
+    # if vol == 0.0:
+    #     vol = m_V0
+    
+    mass = m_V0 * rho[tid]
+    r = x[tid] - rigid_rest_cm[obj_id]
+    
+    # Inertia tensor calculation: I = sum( m * ( (r^2) * Eye - r_outer_r ) )
+    r_sq = wp.dot(r, r)
+    
+    # Component-wise accumulation
+    base_idx = obj_id * 9
+    
+    # Row 0: (y^2+z^2, -xy, -xz)
+    # Row 1: (-yx, x^2+z^2, -yz)
+    # Row 2: (-zx, -zy, x^2+y^2)
+    
+    # Using explicit formulation
+    xx = r[0] * r[0]; yy = r[1] * r[1]; zz = r[2] * r[2]
+    xy = r[0] * r[1]; xz = r[0] * r[2]; yz = r[1] * r[2]
+    
+    # 0,0: yy+zz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 0, mass * (yy + zz))
+    # 0,1: -xy
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 1, mass * (-xy))
+    # 0,2: -xz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 2, mass * (-xz))
+    
+    # 1,0: -xy
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 3, mass * (-xy))
+    # 1,1: xx+zz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 4, mass * (xx + zz))
+    # 1,2: -yz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 5, mass * (-yz))
+    
+    # 2,0: -xz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 6, mass * (-xz))
+    # 2,1: -yz
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 7, mass * (-yz))
+    # 2,2: xx+yy
+    wp.atomic_add(rigid_inertia_accum_flat, base_idx + 8, mass * (xx + yy))
+
+@wp.kernel
+def finalize_rigid_inertia_kernel(
+    rigid_mass: wp.array(dtype=float),
+    rigid_inertia_accum_flat: wp.array(dtype=float),
+    rigid_inertia: wp.array(dtype=wp.mat33),
+    rigid_inv_inertia: wp.array(dtype=wp.mat33),
+    rigid_inv_mass: wp.array(dtype=float),
+    rigid_inertia0: wp.array(dtype=wp.mat33),
+    num_objects: int
+):
+    tid = wp.tid()
+    if tid < num_objects:
+        mass = rigid_mass[tid]
+        if mass > 0.0:
+            rigid_inv_mass[tid] = 1.0 / mass
+            
+            base_idx = tid * 9
+            # Construct mat33
+            # Use transpose constructor layout (row-major) if mat33 constructor expects column vectors?
+            # Warp mat33 constructor takes 3 column vectors or 9 scalars (row-major)?
+            # Checking documentation or behavior: usually row-major for 9 args
+            
+            # Row 0
+            i00 = rigid_inertia_accum_flat[base_idx+0]
+            i01 = rigid_inertia_accum_flat[base_idx+1]
+            i02 = rigid_inertia_accum_flat[base_idx+2]
+            
+            # Row 1
+            i10 = rigid_inertia_accum_flat[base_idx+3]
+            i11 = rigid_inertia_accum_flat[base_idx+4]
+            i12 = rigid_inertia_accum_flat[base_idx+5]
+            
+            # Row 2
+            i20 = rigid_inertia_accum_flat[base_idx+6]
+            i21 = rigid_inertia_accum_flat[base_idx+7]
+            i22 = rigid_inertia_accum_flat[base_idx+8]
+            
+            I = wp.mat33(
+               i00, i01, i02,
+               i10, i11, i12,
+               i20, i21, i22
+            )
+            
+            rigid_inertia[tid] = I
+            rigid_inertia0[tid] = I 
+            
+            # Determine if matrix is invertible
+            det = wp.determinant(I)
+            if wp.abs(det) > 1e-6:
+                rigid_inv_inertia[tid] = wp.inverse(I)
+            else:
+                 # fallback for singular matrix
+                 rigid_inv_inertia[tid] = wp.mat33(0.0,0.0,0.0, 0.0,0.0,0.0, 0.0,0.0,0.0)
+
+        else:
+            rigid_inv_mass[tid] = 0.0
+            z_mat = wp.mat33(0.0,0.0,0.0, 0.0,0.0,0.0, 0.0,0.0,0.0)
+            rigid_inertia[tid] = z_mat
+            rigid_inertia0[tid] = z_mat
+            rigid_inv_inertia[tid] = z_mat
 
 @wp.kernel
 def solve_rigid_body(
@@ -201,7 +355,7 @@ def update_rigid_particle_info(
         x_rel_world = R @ x_rel
         # position and velocity must use the SAME world-space lever arm to avoid artifacts
         particles_x[tid] = bodies.rigid_x[r] + x_rel_world
-        particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
+        # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel_world)
         # particles_v[tid] = bodies.rigid_v[r] + wp.cross(bodies.rigid_omega[r], x_rel)
 
 @wp.kernel

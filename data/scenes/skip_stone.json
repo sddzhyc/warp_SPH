@@ -1,0 +1,33 @@
+{
+	"Configuration": 
+	{
+		"fps" : 30,
+		"domainStart": [-3.0999999046325684, 0, -0.8500000238418579],
+		"domainEnd": [3.0999999046325684, 0.8500000238418579, 0.8500000238418579],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 0,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.004,
+		"stiffness": 5000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.025, 
+		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
+		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]}
+	},
+	"RigidBodies": [
+	{
+		"objectId": 1,
+		"plyFile": "./skip_stones/ball.ply",
+		"velocity": [10.0, -1.0, 0.0],
+		"density": 1000,
+		"isDynamic": true
+	}
+    ]
+}

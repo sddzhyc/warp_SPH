@@ -1,14 +1,17 @@
 from IISPH_kernel import compute_aii_and_density_deviation, compute_pressure_a as compute_pressure_a_iisph, predict_velocity, update_pressure_and_compute_avg_error
-from particle_system import ParticleSystem
-from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
+from kernel_utils import add_ball_kernel, add_particles_kernel
+
+from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info, compute_rigid_cm_mass_kernel, finalize_rigid_cm_kernel, compute_rigid_inertia_kernel, finalize_rigid_inertia_kernel
 from sim_utils import export_ply_points, load_ply_points
 from sph_kernel import *
 
+import os
 import numpy as np
 import warp as wp
+import trimesh as tm
+import json
+from functools import reduce
 from sph_kernel_diff import compute_non_pressure_forces
-# optional dependency for flexible PLY export with custom attributes
-
 class SimSPH:
     def initialize(self):
         print(f"Initialized particle volumes m_V0 = {self.m_V0}")
@@ -31,7 +34,7 @@ class SimSPH:
         print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
-    def __init__(self, config = None, container: ParticleSystem = None, method=0, stage_path="example_sph.usd", ply_path=None):
+    def __init__(self, config = None, container = None, method=0, stage_path="example_sph.usd", ply_path=None):
         """
         If `container` (a `BaseContainer`) is provided, SimSPH will use the container's
         particle arrays as the source of truth. Otherwise it falls back to the original
@@ -46,15 +49,25 @@ class SimSPH:
         self.sim_time = 0.0
         # get simulation params from config
         if (config != None):
+            self.cfg = config
             self.dim = 3
             self.frame_dt = config.get_cfg("timeStepSize") # 采用config中的时间步长
             self.sim_step_to_frame_ratio = config.get_cfg("numberOfStepsPerRenderUpdate")
 
-            self.domain_start = np.array([0.0, 0.0, 0.0])
-            self.domain_start = np.array(config.get_cfg("domainStart"))
+            d_start = config.get_cfg("domainStart")
+            if d_start is None:
+                self.domain_start = np.array([0.0, 0.0, 0.0])
+            else:
+                self.domain_start = np.array(d_start)
 
-            self.domain_end = np.array([1.0, 1.0, 1.0])
-            self.domian_end = np.array(config.get_cfg("domainEnd"))
+            d_end = config.get_cfg("domainEnd")
+            if d_end is None:
+                self.domian_end = np.array([1.0, 1.0, 1.0])
+                self.domain_end = self.domian_end
+            else:
+                self.domian_end = np.array(d_end)
+                self.domain_end = np.array(d_end)
+                
             ds = (self.domian_end - self.domain_start).astype(np.float32)
             self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
 
@@ -114,59 +127,722 @@ class SimSPH:
         )
         self.sim_step_to_frame_ratio = 1
         # self.sim_step_to_frame_ratio = int(32 / self.smoothing_length)
-        if self.ps is None:
-            self.smoothing_length = 0.8
-            self.width = 80.0
-            self.height = 80.0
-            self.length = 80.0
-            self.stiffness = 20
-            self.base_density = 1.0
-            self.particle_mass = 0.01 * self.smoothing_length**3
-            self.dt =0.01 * self.smoothing_length
-            self.dynamic_visc = 0.025
-            self.damping_coef = -0.95
-            self.gravity = -0.1
-            # original initialization
-            self.particle_max_num = int(
-                self.height * (self.width / 4.0) * (self.height / 4.0) / (self.smoothing_length**3)
-            )
-            # self.n = 10000
-            # allocate arrays and initialize
-            self.x = wp.empty(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
-            self.fluid_particle_num = self.particle_max_num # Assume all particles are fluid in demo
-            self.v = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
-            self.rho = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
-            self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
-            print(f"Using demo init with {self.particle_max_num} particles, dh={self.smoothing_length}")
+
+        if ply_path:
+            if os.path.isdir(ply_path) and os.path.exists(os.path.join(ply_path, "params.json")):
+                 self.init_from_houdini_geo(ply_path)
+            else:
+                 self.init_from_ply(ply_path)
+        elif self.ps is None:
+            self.init_from_generated_geo(config)
+        else:
+            self.ti_to_warp()
+        # 调试导出时使用，注意在ti_to_warp初始化n之后定义
+        self.neibor_nums = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        self.pressure_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+        self.viscous_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+    
+        self.USE_METHOD = method
+        if self.USE_METHOD == 1:
+            self.init_IISPH()
+        self.initialize()
+        
+        # Save initial state for reset
+        self.save_initial_state()
+
+    def save_initial_state(self):
+        self.x_initial = wp.zeros_like(self.x)
+        self.v_initial = wp.zeros_like(self.v)
+        self.rho_initial = wp.zeros_like(self.rho)
+        self.object_id_initial = wp.zeros_like(self.object_id)
+        self.material_initial = wp.zeros_like(self.materialMarks.material)
+        self.is_dynamic_initial = wp.zeros_like(self.materialMarks.is_dynamic)
+
+        wp.copy(self.x_initial, self.x)
+        wp.copy(self.v_initial, self.v)
+        wp.copy(self.rho_initial, self.rho)
+        wp.copy(self.object_id_initial, self.object_id)
+        wp.copy(self.material_initial, self.materialMarks.material)
+        wp.copy(self.is_dynamic_initial, self.materialMarks.is_dynamic)
+
+        if self.num_objects > 0:
+            self.rigid_x_initial = wp.zeros_like(self.rbs.rigid_x)
+            self.rigid_v_initial = wp.zeros_like(self.rbs.rigid_v)
+            self.rigid_omega_initial = wp.zeros_like(self.rbs.rigid_omega)
+            self.rigid_quaternion_initial = wp.zeros_like(self.rbs.rigid_quaternion)
+            
+            wp.copy(self.rigid_x_initial, self.rbs.rigid_x)
+            wp.copy(self.rigid_v_initial, self.rbs.rigid_v)
+            wp.copy(self.rigid_omega_initial, self.rbs.rigid_omega)
+            wp.copy(self.rigid_quaternion_initial, self.rbs.rigid_quaternion)
+
+        self.num_particles_curr_initial = self.num_particles_curr
+
+    def reset(self):
+        wp.copy(self.x, self.x_initial)
+        wp.copy(self.v, self.v_initial)
+        wp.copy(self.rho, self.rho_initial)
+        wp.copy(self.object_id, self.object_id_initial)
+        wp.copy(self.materialMarks.material, self.material_initial)
+        wp.copy(self.materialMarks.is_dynamic, self.is_dynamic_initial)
+
+        self.num_particles_curr = self.num_particles_curr_initial
+        
+        if self.num_objects > 0:
+            wp.copy(self.rbs.rigid_x, self.rigid_x_initial)
+            wp.copy(self.rbs.rigid_v, self.rigid_v_initial)
+            wp.copy(self.rbs.rigid_omega, self.rigid_omega_initial)
+            wp.copy(self.rbs.rigid_quaternion, self.rigid_quaternion_initial)
+    def compute_cube_particle_num(self, start, end):
+        num_dim = []
+        for i in range(self.dim):
+            num_dim.append(
+                np.arange(start[i], end[i], self.particle_diameter))
+        return reduce(lambda x, y: x * y, [len(n) for n in num_dim])
+
+    def load_rigid_body(self, rigid_body):
+        obj_id = rigid_body["objectId"]
+        geometry_file = rigid_body["geometryFile"]
+        if not os.path.isabs(geometry_file):
+             # assume path is relative to this file's directory (project root)
+             geometry_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), geometry_file)
+        mesh = tm.load(geometry_file)
+        mesh.apply_scale(rigid_body["scale"])
+        offset = np.array(rigid_body["translation"])
+        if "rotationAngle" in rigid_body and "rotationAxis" in rigid_body:
+            angle = rigid_body["rotationAngle"] / 360 * 2 * 3.1415926
+            direction = rigid_body["rotationAxis"]
+            rot_matrix = tm.transformations.rotation_matrix(angle, direction, mesh.vertices.mean(axis=0))
+            mesh.apply_transform(rot_matrix)
+        mesh.vertices += offset
+        try:
+             tm.repair.fill_holes(mesh)
+        except:
+             pass
+        voxelized_mesh = mesh.voxelized(pitch=self.particle_diameter).fill()
+        voxelized_points_np = voxelized_mesh.points
+        return voxelized_points_np
+
+    def add_cube(self, object_id, lower_corner, cube_size, velocity, density, is_dynamic, color, material):
+        num_dim = []
+        for i in range(self.dim):
+            num_dim.append(
+                np.arange(lower_corner[i], lower_corner[i] + cube_size[i],
+                          self.particle_diameter))
+        num_new_particles = reduce(lambda x, y: x * y, [len(n) for n in num_dim])
+        
+        new_positions = np.array(np.meshgrid(*num_dim, sparse=False, indexing='ij'), dtype=np.float32)
+        new_positions = new_positions.reshape(-1, reduce(lambda x, y: x * y, list(new_positions.shape[1:]))).transpose()
+        
+        wp_new_positions = wp.array(new_positions, dtype=wp.vec3)
+
+        if velocity is None:
+            wp_velocity_arr = wp.zeros(shape=num_new_particles, dtype=wp.vec3)
+        else:
+            wp_velocity_arr = wp.full(shape=num_new_particles, value=wp.vec3(float(velocity[0]), float(velocity[1]), float(velocity[2])), dtype=wp.vec3)
+        
+        # Directly create Warp arrays, avoiding numpy intermediates where simple
+        wp_density_arr = wp.full(shape=num_new_particles, value=density, dtype=float)
+        wp_material_arr = wp.full(shape=num_new_particles, value=material, dtype=int)
+        wp_is_dynamic_arr = wp.full(shape=num_new_particles, value=is_dynamic, dtype=int)
+        
+        # Color needs an array of vec3i, simpler to construct via numpy first or a small kernel?
+        # Actually wp.full with a vec3i value works if passed correctly
+        # But color is a numpy array input [r,g,b]. 
+        # wp.full(..., value=wp.vec3i(*color))
+        wp_color_arr = wp.full(shape=num_new_particles, value=wp.vec3i(int(color[0]), int(color[1]), int(color[2])), dtype=wp.vec3i)
+        
+        start = self.num_particles_curr
+        end = start + num_new_particles
+        if end > self.particle_max_num:
+            raise RuntimeError(f"Particle overflow: {end} > {self.particle_max_num}")
+            
+        # Warp kernel based initialization
+        wp.launch(
+            kernel=add_particles_kernel,
+            dim=num_new_particles,
+            inputs=[
+                start,
+                self.x, self.x_0, self.v, self.rho, self.materialMarks.material, self.materialMarks.is_dynamic,
+                self.object_id, self.m_V, self.color,
+                wp_new_positions,
+                wp_velocity_arr,
+                wp_density_arr,
+                wp_material_arr,
+                wp_is_dynamic_arr,
+                object_id,
+                self.m_V0,
+                wp_color_arr
+            ]
+        )
+        self.num_particles_curr += num_new_particles
+
+    # rigid body computation functions are now kernelized and moved to rigid_fluid_coupling.py
+    def compute_emitted_fluid_particle_num(self, n_pipes, quality):
+        fluid_p_num = 15000 + 5000
+        return int(fluid_p_num * n_pipes * quality ** 3)
+
+    def init_from_houdini_geo(self, ply_path):
+        print("Init from Houdini GEO at", ply_path)
+        
+        # 1. Load params.json
+        params_file = os.path.join(ply_path, "params.json")
+        with open(params_file, 'r') as f:
+            params = json.load(f)
+            
+        self.particle_radius = params.get("radius", 0.025)
+        self.particle_diameter = 2 * self.particle_radius
+        self.smoothing_length = self.particle_radius * 4.0
+        
+        # Domain
+        if "bounding_box" in params:
+            bbox = params["bounding_box"]
+            self.domain_start = np.array(bbox[0], dtype=np.float32)
+            self.domain_end = np.array(bbox[1], dtype=np.float32)
+            ds = (self.domain_end - self.domain_start).astype(np.float32)
+            self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
+        else:
+            self.domain_start = np.array([-10.0, -10.0, -10.0], dtype=np.float32)
+            self.domain_end = np.array([10.0, 10.0, 10.0], dtype=np.float32)
+            ds = (self.domain_end - self.domain_start).astype(np.float32)
+            self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
+            
+        # Physics Defaults
+        self.stiffness = 50000.0
+        self.exponent = 7.0
+        self.base_density = 1000.0
+        self.dim = 3
+        self.m_V0 = 0.8 * self.particle_diameter ** self.dim
+        self.particle_mass = self.m_V0 * self.base_density
+        self.dt = 0.0001
+        self.dynamic_visc = 0.01 
+        self.gravity = -9.8
+        
+        print(f"Loaded params: radius={self.particle_radius}, m_V0={self.m_V0}")
+        
+        # Grid
+        self.grid_size = 10.0 * self.smoothing_length
+        grid_dims = np.ceil((self.domain_end - self.domain_start) / self.grid_size).astype(int)
+        self.grid_num = grid_dims
+        self.grid = wp.HashGrid(self.grid_num[0], self.grid_num[1], self.grid_num[2])
+        
+        print("Grid num:", self.grid_num)
+
+        # 2. Load Particles
+        fluid_pos, fluid_attrs = load_ply_points(os.path.join(ply_path, "fluid.ply"))
+        ball_pos, ball_attrs = load_ply_points(os.path.join(ply_path, "ball.ply"))
+        
+        num_fluid = fluid_pos.shape[0]
+        num_ball = ball_pos.shape[0]
+
+        # Read rigid properties from scene config (if provided)
+        rigid_cfg = None
+        rigid_obj_id = 1
+        rigid_density = self.base_density
+        rigid_velocity = None
+        rigid_angular_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        rigid_is_dynamic = 1
+        if hasattr(self, "cfg") and self.cfg is not None:
+            rigid_bodies_cfg = self.cfg.get_rigid_bodies()
+            if len(rigid_bodies_cfg) > 0:
+                rigid_cfg = rigid_bodies_cfg[0]
+                rigid_obj_id = int(rigid_cfg.get("objectId", 1))
+                rigid_density = float(rigid_cfg.get("density", self.base_density))
+                if "velocity" in rigid_cfg:
+                    rigid_velocity = np.array(rigid_cfg["velocity"], dtype=np.float32)
+                if "angularVelocity" in rigid_cfg:
+                    rigid_angular_velocity = np.array(rigid_cfg["angularVelocity"], dtype=np.float32)
+                rigid_is_dynamic = int(rigid_cfg.get("isDynamic", True))
+        
+        self.particle_max_num = num_fluid + num_ball
+        self.num_particles_curr = self.particle_max_num
+        self.num_rigid_bodies = 1 # One ball
+        self.num_objects = 2 # 1 fluid (id 0) + 1 rigid (id 1)
+        print(f"Loaded {num_fluid} fluid particles and {num_ball} rigid particles from Houdini GEO.")
+        # 3. Allocate All Warp Arrays
+        self.object_id = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        self.x = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+        self.v = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+        self.m_V = wp.zeros(self.particle_max_num, dtype=wp.float32)
+        self.rho = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        self.pressure = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        self.color = wp.zeros(self.particle_max_num, dtype=wp.vec3i)
+        
+        self.materialMarks = MaterialMarks()
+        self.materialMarks.material = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        self.materialMarks.is_dynamic = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        
+        self.x_0 = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+        self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)  # Init acceleration
+
+        # 4. Fill Data
+        
+        # -- Fluid (Id 0) --
+        # Position
+        wp_fluid_pos = wp.array(fluid_pos, dtype=wp.vec3)
+        wp.copy(self.x, wp_fluid_pos, dest_offset=0, count=num_fluid)
+        
+        # Velocity
+        if 'v1' in fluid_attrs:
+            v_np = np.stack([fluid_attrs['v1'], fluid_attrs['v2'], fluid_attrs['v3']], axis=1).astype(np.float32)
+            wp_v = wp.array(v_np, dtype=wp.vec3)
+            wp.copy(self.v, wp_v, dest_offset=0, count=num_fluid)
+
+        # Mass Volume & Density
+        # We can fill range
+        # Use simple kernel or copy from full array
+        wp_mV_fluid = wp.full(num_fluid, self.m_V0, dtype=wp.float32)
+        wp.copy(self.m_V, wp_mV_fluid, dest_offset=0, count=num_fluid)
+        
+        wp_rho_fluid = wp.full(num_fluid, self.base_density, dtype=float)
+        wp.copy(self.rho, wp_rho_fluid, dest_offset=0, count=num_fluid)
+
+        # Marks
+        wp_mat_fluid = wp.full(num_fluid, 1, dtype=int) # 1 = Fluid
+        wp.copy(self.materialMarks.material, wp_mat_fluid, dest_offset=0, count=num_fluid)
+        
+        wp_dyn_fluid = wp.full(num_fluid, 1, dtype=int)
+        wp.copy(self.materialMarks.is_dynamic, wp_dyn_fluid, dest_offset=0, count=num_fluid)
+        
+        # Object ID (0) initialized by zeros so no need to copy if 0.
+        
+        # -- Rigid Ball (Id 1) --
+        start_ball = num_fluid
+        
+        # Position
+        wp_ball_pos = wp.array(ball_pos, dtype=wp.vec3)
+        wp.copy(self.x, wp_ball_pos, dest_offset=start_ball, count=num_ball)
+
+        # Velocity
+        if rigid_velocity is not None:
+            wp_v_b = wp.full(num_ball, value=wp.vec3(float(rigid_velocity[0]), float(rigid_velocity[1]), float(rigid_velocity[2])), dtype=wp.vec3)
+            wp.copy(self.v, wp_v_b, dest_offset=start_ball, count=num_ball)
+        elif 'v1' in ball_attrs:
+            v_np_b = np.stack([ball_attrs['v1'], ball_attrs['v2'], ball_attrs['v3']], axis=1).astype(np.float32)
+            wp_v_b = wp.array(v_np_b, dtype=wp.vec3)
+            wp.copy(self.v, wp_v_b, dest_offset=start_ball, count=num_ball)
+
+        # Mass Volume & Density
+        wp_mV_ball = wp.full(num_ball, self.m_V0, dtype=wp.float32)
+        wp.copy(self.m_V, wp_mV_ball, dest_offset=start_ball, count=num_ball)
+        
+        wp_rho_ball = wp.full(num_ball, rigid_density, dtype=float)
+        wp.copy(self.rho, wp_rho_ball, dest_offset=start_ball, count=num_ball)
+        
+        # Marks
+        wp_mat_ball = wp.full(num_ball, 0, dtype=int) # 0 = Solid
+        wp.copy(self.materialMarks.material, wp_mat_ball, dest_offset=start_ball, count=num_ball)
+        
+        wp_dyn_ball = wp.full(num_ball, rigid_is_dynamic, dtype=int)
+        wp.copy(self.materialMarks.is_dynamic, wp_dyn_ball, dest_offset=start_ball, count=num_ball)
+
+        # Object ID (from config if provided)
+        wp_obj_ball = wp.full(num_ball, rigid_obj_id, dtype=int)
+        wp.copy(self.object_id, wp_obj_ball, dest_offset=start_ball, count=num_ball)
+
+        # -- Set x_0 for all particles --
+        wp.copy(self.x_0, self.x)
+
+        # 5. Initialize RigidBodies struct
+        self.rbs = RigidBodies()
+        self.rbs.rigid_x = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+        self.rbs.rigid_v = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+        self.rbs.rigid_omega = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+        self.rbs.rigid_mass = wp.zeros(self.num_objects, dtype=float)
+        self.rbs.rigid_inv_mass = wp.zeros(self.num_objects, dtype=float)
+        self.rbs.rigid_inertia = wp.zeros(self.num_objects, dtype=wp.mat33)
+        self.rbs.rigid_inertia0 = wp.zeros(self.num_objects, dtype=wp.mat33)
+        self.rbs.rigid_inv_inertia = wp.zeros(self.num_objects, dtype=wp.mat33)
+        self.rbs.rigid_rest_cm = wp.zeros(self.num_objects, dtype=wp.vec3)
+        self.rbs.rigid_force = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+        self.rbs.rigid_torque = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+        self.rbs.rigid_v0 = wp.zeros(self.num_objects, dtype=wp.vec3)
+        self.rbs.rigid_omega0 = wp.zeros(self.num_objects, dtype=wp.vec3)
+        
+        # Quaternion Identity
+        q_np = np.zeros((self.num_objects, 4), dtype=np.float32)
+        q_np[:, 3] = 1.0
+        self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat, requires_grad=True)
+
+        # Initialize rigid-body initial linear/angular velocity from config
+        if rigid_obj_id < self.num_objects:
+            rigid_v_np = np.zeros((self.num_objects, 3), dtype=np.float32)
+            rigid_omega_np = np.zeros((self.num_objects, 3), dtype=np.float32)
+            if rigid_velocity is not None:
+                rigid_v_np[rigid_obj_id] = rigid_velocity
+            rigid_omega_np[rigid_obj_id] = rigid_angular_velocity
+            wp.copy(self.rbs.rigid_v, wp.array(rigid_v_np, dtype=wp.vec3))
+            wp.copy(self.rbs.rigid_v0, wp.array(rigid_v_np, dtype=wp.vec3))
+            wp.copy(self.rbs.rigid_omega, wp.array(rigid_omega_np, dtype=wp.vec3))
+            wp.copy(self.rbs.rigid_omega0, wp.array(rigid_omega_np, dtype=wp.vec3))
+
+        # Compute Rigid Properties (Mass, CM, etc.) using kernels
+        
+        # Temporary accumulators [mass, x*m, y*m, z*m] per object? Kernel compute_rigid_cm_mass_kernel uses rigid_rest_cm + rigid_mass
+        # compute_rigid_cm_mass_kernel inputs: object_id, x, m_V, rho, rigid_mass, rigid_rest_cm, m_V0
+        
+        wp.launch(
+            kernel=compute_rigid_cm_mass_kernel,
+            dim=self.particle_max_num,
+            inputs=[
+                self.object_id,
+                self.x,
+                self.m_V,
+                self.rho,
+                self.rbs.rigid_mass,
+                self.rbs.rigid_rest_cm, 
+                self.m_V0
+            ]
+        )
+        
+        wp.launch(
+            kernel=finalize_rigid_cm_kernel,
+            dim=self.num_objects,
+            inputs=[
+                self.rbs.rigid_mass,
+                self.rbs.rigid_rest_cm,
+                self.num_objects
+            ]
+        )
+        
+        # Set Rigid X to CM
+        wp.copy(self.rbs.rigid_x, self.rbs.rigid_rest_cm)
+        
+        # Initialize rigid velocity from particle velocity average?
+        # For now assume 0 or infer?
+        # If we have particle velocities, we should probably set rigid body velocity to match average linear momentum.
+        # But this part is tricky without a dedicated kernel to sum momentum.
+        # Assuming initial rigid velocity is 0 unless params.json or external logic sets it.
+        # params.json provided does NOT set velocity.
+        
+        # Compute Inertia
+        rigid_inertia_accum_flat = wp.zeros(self.num_objects * 9, dtype=float)
+
+        wp.launch(
+            kernel=compute_rigid_inertia_kernel,
+            dim=self.particle_max_num,
+            inputs=[
+                self.object_id,
+                self.x,
+                self.m_V,
+                self.rho,
+                self.rbs.rigid_rest_cm,
+                rigid_inertia_accum_flat,
+                self.m_V0
+            ]
+        )
+        
+        wp.launch(
+            kernel=finalize_rigid_inertia_kernel,
+            dim=self.num_objects,
+            inputs=[
+                self.rbs.rigid_mass,
+                rigid_inertia_accum_flat,
+                self.rbs.rigid_inertia,
+                self.rbs.rigid_inv_inertia,
+                self.rbs.rigid_inv_mass,
+                self.rbs.rigid_inertia0,
+                self.num_objects
+            ]
+        )
+        
+        # Store initial inertia
+        wp.copy(self.rbs.rigid_inertia0, self.rbs.rigid_inertia)
+
+    def init_from_generated_geo(self, cfg):
+        #========== Compute number of particles ==========#
+        #### Process Fluid Blocks ####
+        fluid_blocks = cfg.get_fluid_blocks()
+        fluid_particle_num = 0
+        for fluid in fluid_blocks:
+            particle_num = self.compute_cube_particle_num(fluid["start"], fluid["end"])
+            fluid["particleNum"] = particle_num
+            self.object_collection[fluid["objectId"]] = fluid
+            fluid_particle_num += particle_num
+
+        #### Process Rigid Blocks ####
+        rigid_blocks = cfg.get_rigid_blocks()
+        rigid_particle_num = 0
+        for rigid in rigid_blocks:
+            particle_num = self.compute_cube_particle_num(rigid["start"], rigid["end"])
+            rigid["particleNum"] = particle_num
+            self.object_collection[rigid["objectId"]] = rigid
+            rigid_particle_num += particle_num
+        
+        #### Process Rigid Bodies ####
+        rigid_bodies = cfg.get_rigid_bodies()
+        for rigid_body in rigid_bodies:
+            voxelized_points_np = self.load_rigid_body(rigid_body)
+            rigid_body["particleNum"] = voxelized_points_np.shape[0]
+            rigid_body["voxelizedPoints"] = voxelized_points_np
+            self.object_collection[rigid_body["objectId"]] = rigid_body
+            rigid_particle_num += voxelized_points_np.shape[0]
+        
+        self.fluid_particle_num = fluid_particle_num
+        self.solid_particle_num = rigid_particle_num
+        self.emitted_particle_num = 2000
+        # self.emitted_particle_num = self.compute_emitted_fluid_particle_num(cfg.get_cfg("nPipe"), cfg.get_cfg("quality"))
+        self.particle_max_num = fluid_particle_num + rigid_particle_num + self.emitted_particle_num
+        self.num_rigid_bodies = len(rigid_blocks)+len(rigid_bodies)
+
+        self.num_objects = self.num_rigid_bodies + len(fluid_blocks) + 1
+
+        if len(rigid_blocks) > 0:
+            print("Warning: currently rigid block functions are not completed, may lead to unexpected behaviour")
+            input("Press Enter to continue")
+
+        #### TODO: Handle the Particle Emitter ####
+        # self.particle_max_num += emitted particles
+        print(f"Particle max num: {self.particle_max_num}")
+        self.num_particles_curr = 0
+
+        #========== Allocate memory ==========#
+        # Rigid body properties
+        if self.num_rigid_bodies > 0:
+            # We keep these on host for initialization convenience inside the loops
+            self.np_rigid_v0 = np.zeros((self.num_objects, self.dim), dtype=np.float32)
+            self.np_rigid_v = np.zeros((self.num_objects, self.dim), dtype=np.float32)
+            self.np_rigid_omega = np.zeros((self.num_objects, 3), dtype=np.float32)
+            self.np_rigid_omega0 = np.zeros((self.num_objects, 3), dtype=np.float32)
+
+
+        # Particle related properties
+        # Allocate Warp arrays directly
+        self.object_id = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        self.x = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+        self.x_0 = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+        self.v = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+        # self.acceleration = wp.zeros(self.particle_max_num, dtype=wp.vec3) # Not used?
+        self.m_V = wp.zeros(self.particle_max_num, dtype=wp.float32)
+        # self.m = wp.zeros(self.particle_max_num, dtype=wp.float32) # Not used?
+        self.rho = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        self.pressure = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        
+        self.color = wp.zeros(self.particle_max_num, dtype=wp.vec3i)
+
+        self.materialMarks = MaterialMarks()
+        self.materialMarks.material = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        self.materialMarks.is_dynamic = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        
+        self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
+
+
+        #========== Initialize particles ==========#
+
+        # Fluid block
+        for fluid in fluid_blocks:
+            obj_id = fluid["objectId"]
+            offset = np.array(fluid["translation"])
+            start = np.array(fluid["start"]) + offset
+            end = np.array(fluid["end"]) + offset
+            scale = np.array(fluid["scale"])
+            velocity = fluid["velocity"]
+            density = fluid["density"]
+            self.base_density = density # record for later use in emitted particles
+            color = fluid["color"]
+            self.add_cube(object_id=obj_id,
+                          lower_corner=start,
+                          cube_size=(end-start)*scale,
+                          velocity=velocity,
+                          density=density, 
+                          is_dynamic=1, # enforce fluid dynamic
+                          color=color,
+                          material=1) # 1 indicates fluid
+        
+        # TODO: Handle rigid block
+        # Rigid block
+        for rigid in rigid_blocks:
+            obj_id = rigid["objectId"]
+            offset = np.array(rigid["translation"])
+            start = np.array(rigid["start"]) + offset
+            end = np.array(rigid["end"]) + offset
+            scale = np.array(rigid["scale"])
+            velocity = rigid["velocity"]
+            angular_velocity = rigid["angularVelocity"]
+            density = rigid["density"]
+            color = rigid["color"]
+            is_dynamic = rigid["isDynamic"]
+            self.np_rigid_v[obj_id] = velocity
+            self.np_rigid_v0[obj_id] = velocity
+            self.np_rigid_omega[obj_id] = angular_velocity
+            self.np_rigid_omega0[obj_id] = angular_velocity
+            self.add_cube(object_id=obj_id,
+                          lower_corner=start,
+                          cube_size=(end-start)*scale,
+                          velocity=velocity,
+                          density=density, 
+                          is_dynamic=is_dynamic,
+                          color=color,
+                          material=0) # 1 indicates solid
+
+        # Rigid bodies
+        for rigid_body in rigid_bodies:
+            obj_id = rigid_body["objectId"]
+            self.object_id_rigid_body.add(obj_id)
+            num_particles_obj = rigid_body["particleNum"]
+            voxelized_points_np = rigid_body["voxelizedPoints"]
+            is_dynamic = rigid_body["isDynamic"]
+            if is_dynamic:
+                velocity = np.array(rigid_body["velocity"], dtype=np.float32)
+                if "angularVelocity" in rigid_body:
+                    angular_velocity = np.array(rigid_body["angularVelocity"], dtype=np.float32)
+                else:
+                    angular_velocity = np.array([0.0 for _ in range(self.dim)], dtype=np.float32)
+            else:
+                velocity = np.array([0.0 for _ in range(self.dim)], dtype=np.float32)
+                angular_velocity = np.array([0.0 for _ in range(self.dim)], dtype=np.float32)
+            density = rigid_body["density"]
+            color = np.array(rigid_body["color"], dtype=np.int32)
+            self.np_rigid_v[obj_id] = velocity
+            self.np_rigid_v0[obj_id] = velocity
+            self.np_rigid_omega[obj_id] = angular_velocity
+            self.np_rigid_omega0[obj_id] = angular_velocity
+            
+            start = self.num_particles_curr
+            end = start + num_particles_obj
+            if end > self.particle_max_num:
+                raise RuntimeError(f"Particle overflow: {end} > {self.particle_max_num}")
+                
+            # Direct Warp array creation
+            wp_density_arr = wp.full(shape=num_particles_obj, value=density, dtype=float)
+            wp_material_arr = wp.full(shape=num_particles_obj, value=0, dtype=int)
+            wp_is_dynamic_arr = wp.full(shape=num_particles_obj, value=int(is_dynamic), dtype=int)
+            # color is np array [r,g,b]
+            wp_color_arr = wp.full(shape=num_particles_obj, value=wp.vec3i(int(color[0]), int(color[1]), int(color[2])), dtype=wp.vec3i)
+
+            wp_new_positions = wp.array(np.array(voxelized_points_np, dtype=np.float32), dtype=wp.vec3)
+            wp_velocity_arr = wp.full(shape=num_particles_obj, value=wp.vec3(float(velocity[0]), float(velocity[1]), float(velocity[2])), dtype=wp.vec3)
+
+            # Warp kernel based initialization
             wp.launch(
-                kernel=initialize_particles,
+                kernel=add_particles_kernel,
+                dim=num_particles_obj,
+                inputs=[
+                    start,
+                    self.x, self.x_0, self.v, self.rho, self.materialMarks.material, self.materialMarks.is_dynamic,
+                    self.object_id, self.m_V, self.color,
+                    wp_new_positions,
+                    wp_velocity_arr,
+                    wp_density_arr,
+                    wp_material_arr,
+                    wp_is_dynamic_arr,
+                    obj_id,
+                    self.m_V0,
+                    wp_color_arr
+                ]
+            )
+            self.num_particles_curr += num_particles_obj
+
+        # some stntance after init needed to run
+        # Rigid body logic moved to kernels
+
+        # Map to Warp
+        self.rbs = RigidBodies()
+        if self.num_rigid_bodies > 0:
+            # Allocate arrays on device
+            self.rbs.rigid_rest_cm = wp.zeros(self.num_objects, dtype=wp.vec3)
+            self.rbs.rigid_x = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+            self.rbs.rigid_v0 = wp.array(self.np_rigid_v0, dtype=wp.vec3)
+            self.rbs.rigid_v = wp.array(self.np_rigid_v, dtype=wp.vec3, requires_grad=True)
+            self.rbs.rigid_force = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+            self.rbs.rigid_torque = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
+            self.rbs.rigid_omega = wp.array(self.np_rigid_omega, dtype=wp.vec3, requires_grad=True)
+            self.rbs.rigid_omega0 = wp.array(self.np_rigid_omega0, dtype=wp.vec3)
+            
+            # Quaternion initialization (identity = 0,0,0,1 in x,y,z,w)
+            q_np = np.zeros((self.num_objects, 4), dtype=np.float32)
+            q_np[:, 3] = 1.0 
+            self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+            
+            self.rbs.rigid_mass = wp.zeros(self.num_objects, dtype=float)
+            self.rbs.rigid_inv_mass = wp.zeros(self.num_objects, dtype=float)
+            self.rbs.rigid_inertia = wp.zeros(self.num_objects, dtype=wp.mat33)
+            self.rbs.rigid_inertia0 = wp.zeros(self.num_objects, dtype=wp.mat33)
+            self.rbs.rigid_inv_inertia = wp.zeros(self.num_objects, dtype=wp.mat33)
+
+            # --- Compute Rigid Properties on GPU ---
+            
+            # Temporary accumulators
+            # rigid_rest_cm_accum_flat = wp.zeros(self.num_objects * 3, dtype=float)
+            rigid_inertia_accum_flat = wp.zeros(self.num_objects * 9, dtype=float)
+
+            # 1. Compute Mass and Weighted Position Sum
+            wp.launch(
+                kernel=compute_rigid_cm_mass_kernel,
                 dim=self.particle_max_num,
-                inputs=[self.x, self.smoothing_length, self.width, self.height, self.length],
+                inputs=[
+                    self.object_id,
+                    self.x,
+                    self.m_V,
+                    self.rho,
+                    self.rbs.rigid_mass,
+                    self.rbs.rigid_rest_cm, 
+                    self.m_V0
+                ]
             )
 
-            grid_size = int(self.height / (self.smoothing_length))
-            self.grid = wp.HashGrid(grid_size, grid_size, grid_size)
-            # ensure volume array exists for export consistency
-            # self.m_V0 = getattr(self, 'm_V0', 0.01 * self.smoothing_length**3)
-            self.m_V = wp.array(np.full(self.particle_max_num, self.m_V0, dtype=np.float32), dtype=wp.float32)
-        else:
-            if ply_path:
-                self.init_from_ply(ply_path)
-            else:
-                self.ti_to_warp()
-            # 调试导出时使用，注意在ti_to_warp初始化n之后定义
-            self.neibor_nums = wp.zeros(self.particle_max_num, dtype=wp.int32)
-            self.pressure_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
-            self.viscous_forces = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+            # 2. Finalize Rest CM
+            wp.launch(
+                kernel=finalize_rigid_cm_kernel,
+                dim=self.num_objects,
+                inputs=[
+                    self.rbs.rigid_mass,
+                    self.rbs.rigid_rest_cm,
+                    self.num_objects
+                ]
+            )
+
+            # Initialize rigid_x from rigid_rest_cm
+            wp.copy(self.rbs.rigid_x, self.rbs.rigid_rest_cm)
+
+            # 3. Compute Inertia Tensor
+            wp.launch(
+                kernel=compute_rigid_inertia_kernel,
+                dim=self.particle_max_num,
+                inputs=[
+                    self.object_id,
+                    self.x,
+                    self.m_V,
+                    self.rho,
+                    self.rbs.rigid_rest_cm,
+                    rigid_inertia_accum_flat,
+                    self.m_V0
+                ]
+            )
+
+            # 4. Finalize Inertia
+            wp.launch(
+                kernel=finalize_rigid_inertia_kernel,
+                dim=self.num_objects,
+                inputs=[
+                    self.rbs.rigid_mass,
+                    rigid_inertia_accum_flat,
+                    self.rbs.rigid_inertia,
+                    self.rbs.rigid_inv_inertia,
+                    self.rbs.rigid_inv_mass,
+                    self.rbs.rigid_inertia0,
+                    self.num_objects
+                ]
+            )
+
+        # self.object_id = wp.zeros(self.particle_max_num, dtype=wp.int32)
+        print(f"n: {self.particle_max_num}, x shape: {self.x.shape}")
+        self.print_rigid_info()  
+        # Already allocated and filled via add_particles/kernels, no need to recreate from np arrays
+        # But we previously mapped from np_x, so let's clean that up.
         
-            self.USE_METHOD = method
-            if self.USE_METHOD == 1:
-                self.init_IISPH()
-            self.initialize()
-        # renderer
-        # self.renderer = None
-        # if stage_path:
-        #     self.renderer = wp.render.UsdRenderer(stage_path)
+        # self.x = wp.array(self.np_x, dtype=wp.vec3, requires_grad=True)
+        # self.x_0 = wp.array(self.np_x_0, dtype=wp.vec3)
+        # self.v = wp.array(self.np_v, dtype=wp.vec3, requires_grad=True)
+        # self.rho = wp.array(self.np_rho, dtype=float, requires_grad=True)
+        # self.pressure = wp.array(self.np_pressure, dtype=float, requires_grad=True)
+        # self.m_V = wp.array(self.np_m_V, dtype=wp.float32)
+
+        # self.materialMarks = MaterialMarks()
+        # self.materialMarks.material = wp.array(self.np_material, dtype=wp.int32)
+        # self.materialMarks.is_dynamic = wp.array(self.np_is_dynamic, dtype=wp.int32)
+        
+        # self.a = wp.zeros(self.particle_max_num, dtype=wp.vec3, requires_grad=True)
 
     def init_IISPH(self):
         self.a_ii = wp.zeros(self.particle_max_num, dtype=float)
@@ -181,6 +857,7 @@ class SimSPH:
             self.fluid_particle_num = int(self.ps.fluid_particle_num)
             self.solid_particle_num = int(self.ps.solid_particle_num)
             self.particle_max_num = int(self.ps.particle_max_num)
+            self.num_particles_curr = self.particle_max_num
             self.num_rigid_bodies = int(self.ps.num_rigid_bodies)
             self.num_objects = int(self.ps.num_objects)
             print(f"Current particle num: {self.particle_max_num}, Particle max num: {self.particle_max_num}")
@@ -466,7 +1143,7 @@ class SimSPH:
 
     def step(self, t):
         self.time_step = t
-        with wp.ScopedTimer("step"):
+        with wp.ScopedTimer("step", active=self.verbose):
             for _ in range(self.sim_step_to_frame_ratio):
                 with wp.ScopedTimer("grid build", active=self.verbose):
                     # build grid
@@ -486,7 +1163,8 @@ class SimSPH:
                         dim=self.particle_max_num,
                         inputs=[self.x, self.v,
                                 self.materialMarks,
-                                self.domain_size,
+                                wp.vec3(*self.domain_start),
+                                wp.vec3(*self.domain_end),
                                 self.padding,
                         ]
                     )
@@ -518,6 +1196,7 @@ class SimSPH:
         #         points=self.x.numpy(), radius=self.smoothing_length, name="points", colors=(0.8, 0.3, 0.2)
         #     )
         #     self.renderer.end_frame()
+        # self.print_rigid_info()  
 
     def print_rigid_info(self):
         if self.num_rigid_bodies > 0:
@@ -531,8 +1210,8 @@ class SimSPH:
             print(f"[rbs] num={self.num_rigid_bodies}")
             for i in range(1, self.num_objects): # 跳过流体
                 print(
-                    f"  id={i} mass={masses[i]:.6f} pos={pos[i]} vel={vel[i]} "
-                    f"omega={omega[i]} quat={quat[i]} rest_cm={rest_cm[i]}"
+                    f" id={i} mass={masses[i]:.6f} pos={pos[i]} rest_cm={rest_cm[i]}\n vel={vel[i]} "
+                    f"omega={omega[i]} quat={quat[i]}"
                 )
     
     def export_ply(self, series_prefix, cnt_ply):

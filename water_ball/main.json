@@ -1,0 +1,122 @@
+{
+  "params": {
+    "radius": 0.025,
+    "density0": 1000.0,
+    "viscosity": 0.001,
+    "gravity": [
+      0.0,
+      -9.8,
+      0.0
+    ]
+  },
+  "objects": {
+    "fluid": {
+      "obj_id": 0,
+      "model": "fluid.ply",
+      "type": "FLUID",
+      "fixed": 0
+    },
+    "boundary": {
+      "obj_id": 1,
+      "model": "boundary.ply",
+      "type": "RIGID",
+      "fixed": 1
+    },
+    "ball01": {
+      "obj_id": 2,
+      "model": "ball01.ply",
+      "type": "RIGID",
+      "fixed": 0,
+      "mass": 4.0,
+      "center": [
+        -1.0,
+        0.525,
+        0.0
+      ],
+      "moment_of_inertia": [
+        [
+          0.016,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.016,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.016
+        ]
+      ],
+      "velocity": [
+        5.0,
+        -2.5,
+        -7.5
+      ]
+    },
+    "ball02": {
+      "obj_id": 3,
+      "model": "ball02.ply",
+      "type": "RIGID",
+      "fixed": 0,
+      "mass": 4.0,
+      "center": [
+        -0.6,
+        0.625,
+        -0.15
+      ],
+      "moment_of_inertia": [
+        [
+          0.016,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.016,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.016
+        ]
+      ]
+    },
+    "ball03": {
+      "obj_id": 4,
+      "model": "ball03.ply",
+      "type": "RIGID",
+      "fixed": 0,
+      "mass": 4.0,
+      "center": [
+        -0.2,
+        0.625,
+        -0.15
+      ],
+      "moment_of_inertia": [
+        [
+          0.016,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.016,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.016
+        ]
+      ]
+    }
+  },
+  "labels": {
+    "FLUID": 0,
+    "RIGID": 1
+  }
+}
