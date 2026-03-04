@@ -22,6 +22,8 @@ def compute_rigid_loss(
     rigid_x: wp.array(dtype=wp.vec3),
     target_rigid_x: wp.array(dtype=wp.vec3),
     rigid_vel: wp.array(dtype=wp.vec3),
+    opt_rigid_vel: wp.array(dtype=wp.vec3),
+    stone_rigid_id: int,
     rigid_q: wp.array(dtype=wp.quat),
     target_rigid_q: wp.array(dtype=wp.quat),
     loss: wp.array(dtype=float)
@@ -35,7 +37,9 @@ def compute_rigid_loss(
     l_pos = wp.dot(diff_pos, diff_pos)
     
     w_penalty = 1.0
-    loss_penalty = w_penalty * max(rigid_vel[tid][1] - upperbound, 0.)
+    loss_penalty = 0.0
+    if tid == stone_rigid_id:
+        loss_penalty = w_penalty * wp.max(opt_rigid_vel[0][1] - upperbound, 0.0)
     # Rotation loss (0.5 * ||q - tq||^2)
     # q = rigid_q[tid]
     # tq = target_rigid_q[tid]
@@ -53,10 +57,10 @@ def compute_rigid_loss(
 class SkipStoneTask(Task):
     def __init__(self, sim):
         super().__init__(sim)
+        self.stone_rigid_id = self._get_stone_rigid_id()
         # Optimization variables for rigid body initial velocities
-        # Assume rigid body 1 (index 1) is the stone
-        initial_v = self.sim.rigid_v_arrays[0].numpy()[1]
-        initial_omega = self.sim.rigid_omega_arrays[0].numpy()[1]
+        initial_v = self.sim.rigid_v_arrays[0].numpy()[self.stone_rigid_id]
+        initial_omega = self.sim.rigid_omega_arrays[0].numpy()[self.stone_rigid_id]
         device = self.sim.rigid_v_arrays[0].device
         self.opt_rigid_v = wp.array([initial_v], dtype=wp.vec3, device=device, requires_grad=True)
         self.opt_rigid_omega = wp.array([initial_omega], dtype=wp.vec3, device=device, requires_grad=True)
@@ -67,23 +71,38 @@ class SkipStoneTask(Task):
         self.init_targets()
         self.init_optimizer()
 
+    def _get_stone_rigid_id(self):
+        rigid_bodies = self.sim.cfg.get_rigid_bodies() if hasattr(self.sim, "cfg") and self.sim.cfg is not None else []
+        if len(rigid_bodies) > 0 and "objectId" in rigid_bodies[0]:
+            return int(rigid_bodies[0]["objectId"])
+        return 1
+
+    def _get_stone_cfg(self):
+        rigid_bodies = self.sim.cfg.get_rigid_bodies() if hasattr(self.sim, "cfg") and self.sim.cfg is not None else []
+        for rb in rigid_bodies:
+            if int(rb.get("objectId", -1)) == self.stone_rigid_id:
+                return rb
+        return None
+
     def init_targets(self):
-        # 初始化目标位置，这里使用您提供的数值，并转为 wp.array
-        # 注意：sim.x 是粒子数组，sim.rbs.rigid_x 是刚体数组
-        # 如果目标是刚体位置，需要与 rigid_x 形状匹配
         if self.sim.num_objects > 0:
             self.target_rigid_x = wp.zeros_like(self.sim.rbs.rigid_x)
             self.target_rigid_q = wp.zeros_like(self.sim.rbs.rigid_quaternion)
-            
-            # 手动设置刚体的目标位置（假设 index 1 是我们要打水漂的石头）
-            # self.target_x 原本是 wp.vec3(0.25, 0, 0.7)，这里假设这是刚体1的目标
+
+            stone_cfg = self._get_stone_cfg()
+
             target_pos_np = self.sim.rbs.rigid_x.numpy().copy()
-            if len(target_pos_np) > 1:
-                target_pos_np[1] = [0.15, 0.5, 0.0] # 设置刚体1的目标位置
-                
+            if stone_cfg is not None and "targetX" in stone_cfg and self.stone_rigid_id < len(target_pos_np):
+                target_pos_np[self.stone_rigid_id] = np.array(stone_cfg["targetX"], dtype=np.float32)
+
             wp.copy(self.target_rigid_x, wp.array(target_pos_np, dtype=wp.vec3))
-            
-            wp.copy(self.target_rigid_q, self.sim.rbs.rigid_quaternion)
+
+            target_q_np = self.sim.rbs.rigid_quaternion.numpy().copy()
+            if stone_cfg is not None and self.stone_rigid_id < len(target_q_np):
+                if "targetQ" in stone_cfg:
+                    target_q_np[self.stone_rigid_id] = np.array(stone_cfg["targetQ"], dtype=np.float32)
+
+            wp.copy(self.target_rigid_q, wp.array(target_q_np, dtype=wp.quat))
 
     def init_optimizer(self):
         # 优化刚体1的初始速度和角速度（假设刚体1是石头）
@@ -106,11 +125,27 @@ class SkipStoneTask(Task):
                     self.sim.rigid_x_arrays[self.sim.sim_steps], 
                     self.target_rigid_x,
                     self.sim.rigid_v_arrays[self.sim.sim_steps], 
+                    self.opt_rigid_v,
+                    self.stone_rigid_id,
                     self.sim.rigid_quaternion_arrays[self.sim.sim_steps],
                     self.target_rigid_q,
                     self.sim.loss
                 ]
             )
+
+    def get_loss_state_info(self):
+        info = {}
+        if self.sim.num_objects > self.stone_rigid_id:
+            target_idx = self.stone_rigid_id
+            final_pos = self.sim.rigid_x_arrays[self.sim.sim_steps].numpy()[target_idx]
+            target_pos = self.target_rigid_x.numpy()[target_idx]
+            
+            final_vel_y = self.sim.rigid_v_arrays[self.sim.sim_steps].numpy()[target_idx][1]
+            
+            info[f"stone_final_pos"] = final_pos
+            info[f"stone_target_pos"] = target_pos
+            info[f"stone_final_vy"] = final_vel_y
+        return info
 
     def init_simulation_state(self, t):
         if t == 0 and self.sim.num_objects > 0:
@@ -125,7 +160,7 @@ class SkipStoneTask(Task):
                         self.sim.rigid_omega_arrays[0],
                         self.opt_rigid_v,
                         self.opt_rigid_omega,
-                        1,
+                        self.stone_rigid_id,
                     ],
                 )
 
@@ -138,3 +173,18 @@ class SkipStoneTask(Task):
             self.opt_rigid_v.grad.zero_()
         if self.opt_rigid_omega.grad:
             self.opt_rigid_omega.grad.zero_()
+
+    def norm_final_grad(self, v_grad, materialMarks):
+        # Normalize rigid body gradients if needed
+        # For now, we can just normalize the opt_rigid_v and opt_rigid_omega gradients directly
+        if self.opt_rigid_v.grad:
+            grad_np = self.opt_rigid_v.grad.numpy()
+            norm = np.linalg.norm(grad_np)
+            if norm > 1e-10:
+                self.opt_rigid_v.grad = wp.array(grad_np / norm, dtype=wp.vec3, device=self.opt_rigid_v.device)
+                
+        if self.opt_rigid_omega.grad:
+            grad_np = self.opt_rigid_omega.grad.numpy()
+            norm = np.linalg.norm(grad_np)
+            if norm > 1e-10:
+                self.opt_rigid_omega.grad = wp.array(grad_np / norm, dtype=wp.vec3, device=self.opt_rigid_omega.device)

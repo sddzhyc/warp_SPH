@@ -1,14 +1,14 @@
 {
 	"Configuration": 
 	{
-		"fps" : 30,
+		"fps" : 60,
 		"domainStart": [-3.0, -0.05, -0.77],
 		"domainEnd": [3.0, 0.8500000238418579, 0.77],
 		"numberOfStepsPerRenderUpdate": 1,
 		"density0": 1000, 
 		"simulationMethod": 0,
 		"gravitation": [0.0, -9.81, 0.0],
-		"timeStepSize": 0.004,
+		"timeStepSize": 0.00016,
 		"stiffness": 7000,
 		"exponent": 7,
 		"boundaryHandlingMethod": 0,
@@ -26,10 +26,20 @@
 	{
 		"objectId": 1,
 		"plyFile": "./skip_stones/ball.ply",
-		"velocity": [10.0, -10.0, 0.0],
+		"translation": [-2, 1.2, 0],
+		"rotationAxis": [0, 0, 1],
+		"rotationAngle": 0,
+		"velocity": [25, -16, 0.0],
+		"angularVelocity": [-3, 20, 6],
 		"density": 2000,
 		"isDynamic": true,
-		"targetX": [-0.5, 1.0, 0.0]
+		"targetX": [1.7, 1.6, 0.0],
+		"targetAngleInDegree": [0, 0, 0]
 	}
-    ]
+    ],
+	"TaskConfig":
+	{
+		"end_time": 0.23,
+		"end_timesteps": 1420
+	}
 }

@@ -26,10 +26,15 @@
 	{
 		"objectId": 1,
 		"plyFile": "./skip_stones/ball.ply",
-		"velocity": [10.0, -10.0, 0.0],
+		"velocity": [11.545508  , -5.0 , -0.0],
+		"angularVelocity": [0.00890812, -0.13265608, -1.2954305],
 		"density": 2000,
-		"isDynamic": true,
-		"targetX": [-0.5, 1.0, 0.0]
+		"isDynamic": true
 	}
-    ]
+    ],
+	"record": ["Exporting frame 375 to PLY on time step 3000.",
+	"[rbs] num=1",
+	" id=1 mass=20.000004 pos=[-0.51222265  1.0022401  -0.00744913] rest_cm=[-2.8543246e+00  6.9947022e-01  8.9849206e-04]",
+	" vel=[ 6.818454    0.87881243 -0.03723202] omega=[-0.0998621 -1.1923764  2.6888285] quat=[-0.06806549 -0.09326863  0.8204206   0.55998033]"
+	]
 }

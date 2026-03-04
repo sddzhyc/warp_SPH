@@ -26,7 +26,10 @@
 	{
 		"objectId": 1,
 		"plyFile": "./skip_stones/ball.ply",
-		"velocity": [10.0, -10.0, 0.0],
+		"velocity": [11.545508  , -5.0 , -0.0],
+		"angularVelocity": [0.00890812, -0.13265608, -1.2954305],
+		"velocity2": [11.545508  , -1.6261317 , -0.0],
+		"angularVelocity2": [0.00890812, -0.13265608, -1.2954305],
 		"density": 2000,
 		"isDynamic": true,
 		"targetX": [-0.5, 1.0, 0.0]

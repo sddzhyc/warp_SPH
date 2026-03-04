@@ -35,12 +35,13 @@ def sum_grad_fluid(
 
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False,  verbose=False):
+    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, verbose=False):
         super().__init__(config, container, 0, stage_path, ply_path)
         self.ply_path = ply_path
         self.sim_steps = sim_steps
         self.train_rate = lr
         self.use_custom_grad = use_custom_grad
+        self.use_norm_grad = use_norm_grad
         self.init_diff_phys(self.sim_steps)
         self.init_diff_task()
         self.smoothing_length *= h_scale
@@ -64,15 +65,21 @@ class SimSPH_diff(SimSPH):
             self.rho_arrays.append(wp.zeros_like(self.rho, requires_grad=True))
             self.pressure_arrays.append(wp.zeros_like(self.pressure, requires_grad=True))
             self.a_arrays.append(wp.zeros_like(self.a, requires_grad=True))
-            self.viscous_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
-            self.pressure_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
-            self.debug_val_arrays.append(wp.zeros_like(wp.zeros(self.particle_max_num, dtype=wp.float32)))
+            # self.viscous_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
+            # self.pressure_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
+            # self.debug_val_arrays.append(wp.zeros_like(wp.zeros(self.particle_max_num, dtype=wp.float32)))
         print(f"Initialized differentiable simulation for {self.sim_steps} steps (no segments).")
         # Copy initial state to first arrays
         wp.copy(self.x_arrays[0], self.x)
         wp.copy(self.v_arrays[0], self.v)
         wp.copy(self.rho_arrays[0], self.rho)
-        # pressure and a are computed, so 0 is fine or copy if initialized
+        # Optimize memory: Use a single buffer for all steps (Warning: Gradients will be incorrect if used in backward pass)
+        temp_visc_buffer = wp.zeros_like(self.v, requires_grad=False)
+        temp_pres_buffer = wp.zeros_like(self.v, requires_grad=False)
+        temp_debug_buffer = wp.zeros(self.particle_max_num, dtype=wp.float32)
+        self.viscous_forces_arrays = [temp_visc_buffer] * (self.sim_steps + 1)
+        self.pressure_forces_arrays = [temp_pres_buffer] * (self.sim_steps + 1)
+        self.debug_val_arrays = [temp_debug_buffer] * (self.sim_steps + 1)
 
         # No segment checkpoints or saved grads
 
@@ -126,21 +133,6 @@ class SimSPH_diff(SimSPH):
             
         self.optimizer = self.task.optimizer
         # self.opt_var maintained by self.opt_v_fluid set by task
-
-
-    def forward(self):
-        self.loss.zero_()
-        self.tapes = [] # Reset tapes
-
-        for t in range(self.sim_steps):
-            # advance state from t -> t+1
-            self.step(t)
-
-        self.loss_tape = wp.Tape()
-        # Compute loss
-        with self.loss_tape:
-            self.task.compute_loss()
-
 
     def clear_grad(self):
         # 1. 重置 Tape：防止计算图在多次 backward 中累积，导致内存爆炸和错误回传
@@ -198,8 +190,8 @@ class SimSPH_diff(SimSPH):
         for t in range(0, self.sim_steps + 1):
             self.pressure_arrays[t].zero_()
             self.a_arrays[t].zero_()
-            self.viscous_forces_arrays[t].zero_()
-            self.pressure_forces_arrays[t].zero_()
+            # self.viscous_forces_arrays[t].zero_()
+            # self.pressure_forces_arrays[t].zero_()
             self.rigid_force_arrays[t].zero_()
             self.rigid_torque_arrays[t].zero_()
             self.debug_val_arrays[t].zero_()
@@ -211,8 +203,8 @@ class SimSPH_diff(SimSPH):
             wp.launch(sum_L2_states_t, dim=self.particle_max_num, inputs=[grad_array.grad, sum_sq])
             l2 = np.sqrt(sum_sq.numpy()[0])
             #print(f"Normalizing gradient with L2 norm: {l2}")
-            # if l2 > 1e-10:
-            #     wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[grad_array.grad, l2])
+            if l2 > 1e-10:
+                wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[grad_array.grad, l2])
 # 15.136797 -180.5951     15.135387
 # 15.137694 -180.59273    15.134274
     def backward(self):
@@ -237,6 +229,11 @@ class SimSPH_diff(SimSPH):
 
         for t in range(self.sim_steps):
             # advance state from t -> t+1
+            current_tape = wp.Tape()
+            self.tapes.append(current_tape)
+            # Set optimized initial rigid velocities if applicable
+            self.task.init_simulation_state(t)
+
             self.step(t)
             # print(f"Completed forward step {t+1}/{self.sim_steps}")
         
@@ -262,8 +259,9 @@ class SimSPH_diff(SimSPH):
             # We should normalize them before backing through step `sim_steps-1 to sim_steps`.
             
             # Normalize gradients at t+1 (x_arrays[t+1], v_arrays[t+1])
-            self.normalize_single_state_grad(self.x_arrays[t+1])
-            self.normalize_single_state_grad(self.v_arrays[t+1])
+            if self.use_norm_grad:
+                self.normalize_single_state_grad(self.x_arrays[t+1])
+                self.normalize_single_state_grad(self.v_arrays[t+1])
             
             # 2. Propagate through step t (t -> t+1) to get grads at t
             self.tapes[t].backward()
@@ -271,8 +269,9 @@ class SimSPH_diff(SimSPH):
             # (Loop continues to t-1, where we will normalize grads at t, which we just computed)
         
         # Finally, normalize grads at t=0
-        self.normalize_single_state_grad(self.x_arrays[0])
-        self.normalize_single_state_grad(self.v_arrays[0])
+        if self.use_norm_grad:
+            self.normalize_single_state_grad(self.x_arrays[0])
+            self.normalize_single_state_grad(self.v_arrays[0])
 
         wp.synchronize()
         t_backward_end = time.perf_counter()
@@ -290,6 +289,7 @@ class SimSPH_diff(SimSPH):
     def norm_final_grad(self):
         sum_sq = wp.zeros(1, dtype=float)
 
+        # TODO: 检查代码冗余
         # 1. Normalize x_arrays[0].grad
         if self.x_arrays[0].grad:
             wp.launch(sum_L2_states_t, dim=self.particle_max_num, inputs=[self.x_arrays[0].grad, sum_sq])
@@ -305,19 +305,14 @@ class SimSPH_diff(SimSPH):
             if l2_v > 1e-10:
                 wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[self.v_arrays[0].grad, l2_v])
             
-            # Compute final opt_v_fluid gradient
-            if self.opt_v_fluid.grad:
-                self.opt_v_fluid.grad.zero_()
-                wp.launch(sum_grad_fluid, dim=self.particle_max_num, inputs=[self.v_arrays[0].grad, self.opt_v_fluid.grad, self.materialMarks])
+            # Compute final opt_var gradient if it's fluid velocity
+            # We delegate this to the task if needed, or handle it generically
+            if hasattr(self.task, 'norm_final_grad'):
+                self.task.norm_final_grad(self.v_arrays[0].grad, self.materialMarks)
 
     def step(self, t):
             self.time_step = t
-            current_tape = wp.Tape()
-            self.tapes.append(current_tape)
-
-            # Set optimized initial rigid velocities if applicable
-            self.task.init_simulation_state(t)
-
+            current_tape = self.tapes[-1]
             # use state at time t as input, write results to time t+1
             x_in = self.x_arrays[t]
             # wp.copy(x_out, x_in)
@@ -556,6 +551,7 @@ class SimSPH_diff(SimSPH):
         vf = self.viscous_forces_arrays[time_step].numpy()
         np_a = self.a_arrays[time_step].numpy()
         np_v = self.v_arrays[time_step].numpy()
+        np_vel = np.linalg.norm(np_v, axis=1)
         debug_val = self.debug_val_arrays[time_step].numpy()
 
         # Gradients
@@ -584,6 +580,7 @@ class SimSPH_diff(SimSPH):
             'vx': np_v[:,0].astype(np.float32),
             'vy': np_v[:,1].astype(np.float32),
             'vz': np_v[:,2].astype(np.float32),
+            'vel': np_vel.astype(np.float32),
             'material': self.materialMarks.material.numpy().astype(np.int32),
             'is_dynamic': self.materialMarks.is_dynamic.numpy().astype(np.int32),
 

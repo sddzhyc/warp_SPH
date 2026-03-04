@@ -121,3 +121,25 @@ class BallDemoTask(Task):
     def clear_grad(self):
         if self.opt_v_fluid.grad:
             self.opt_v_fluid.grad.zero_()
+
+    def get_loss_state_info(self):
+        info = {}
+        if self.sim.num_objects > 0:
+            # Assuming rigid body 1 is the target object if exists, else 0?
+            # In ball demo, usually fluid is 0, ball is 1.
+            target_idx = 1 if self.sim.num_objects > 1 else 0
+            
+            final_pos = self.sim.rigid_x_arrays[self.sim.sim_steps].numpy()[target_idx]
+            target_pos = self.target_rigid_x.numpy()[target_idx]
+            
+            info[f"body_{target_idx}_final_pos"] = final_pos
+            info[f"body_{target_idx}_target_pos"] = target_pos
+        return info
+
+    def norm_final_grad(self, v_grad, materialMarks):
+        if self.opt_v_fluid.grad:
+            self.opt_v_fluid.grad.zero_()
+            # sum_grad_fluid is defined in SimSPH_diff, we need to import it or move it
+            # For now, we can access it via self.sim
+            from SimSPH_diff import sum_grad_fluid
+            wp.launch(sum_grad_fluid, dim=self.sim.particle_max_num, inputs=[v_grad, self.opt_v_fluid.grad, materialMarks])
