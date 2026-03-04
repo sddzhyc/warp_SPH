@@ -23,6 +23,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_frames", type=int, default=80000, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
+    parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for SimSPH, 1 for SimDFSPH.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
@@ -46,11 +47,11 @@ if __name__ == "__main__":
     
     # if config.get_cfg("outputInterval"):
     #     output_interval = config.get_cfg("outputInterval")
-    output_interval = int(0.016 / config.get_cfg("timeStepSize"))
+    output_interval = int(frame_time / config.get_cfg("timeStepSize")) # int(0.016 / config.get_cfg("timeStepSize"))
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
-    method = 0
+    method = args.method
     if method == 1:
         scene_name+='_dfsph'
     series_prefix = f"outputs/{scene_name}_output/particle_object_{{:06d}}.ply"
@@ -75,7 +76,8 @@ if __name__ == "__main__":
     with wp.ScopedDevice(args.device):
         # prepare the container before creating the simulation so SimSPH
         if method == 1:
-            example = PipeEnvSolver(config, container = None, ply_path=args.ply_path)
+            example = SimDFSPH(config, container = None, ply_path=args.ply_path)
+            # example = PipeEnvSolver(config, container = None, ply_path=args.ply_path)
         else:
             example = SimSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
         cnt = 0

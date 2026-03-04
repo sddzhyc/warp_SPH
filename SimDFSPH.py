@@ -1,14 +1,18 @@
 import warp as wp
 import numpy as np
 from SimSPH import SimSPH
-from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_pressure_solve_iteration_kernel
+from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_density_change_kernel, compute_divergence_solve_iteration_kernel, compute_pressure_solve_iteration_kernel
 from sph_kernel import compute_density, compute_non_presure_forces, kick, drift
 
 class SimDFSPH(SimSPH):
     def __init__(self, config=None, container=None, method=0, stage_path="example_sph.usd", ply_path=None):
         super().__init__(config, container, method, stage_path, ply_path)
+        self.surface_tension = 0. # 0.01
         self.max_error = 0.05
         self.m_max_iterations = 100
+        self.max_error_V = 0.1
+        self.m_max_iterations_v = 100
+        self.enable_divergence_solver = True
         
         self.dfsph_factor = None
         self.density_adv = None
@@ -78,8 +82,9 @@ class SimDFSPH(SimSPH):
             ]
         )
         
-        # 3. Divergence Solve (Skipped as requested/missing kernels)
-        # TODO: Implement divergence solve
+        # 3. Divergence Solve
+        if self.enable_divergence_solver:
+            self.divergence_solve()
         
         # 4. Compute Non-Pressure Forces (Viscosity, Gravity)
         wp.launch(
@@ -98,6 +103,7 @@ class SimDFSPH(SimSPH):
             self.viscous_forces,
             self.object_id,
             self.rbs,
+            self.surface_tension,
             self.gravity,
             self.a
         ],
@@ -133,18 +139,17 @@ class SimDFSPH(SimSPH):
     def pressure_solve(self):
         m_iterations = 0
         avg_density_err = 0.0
+        converged = False
+        eta = self.max_error * 0.01 * self.base_density
+
+        self.compute_density_adv()
         
         # Loop
         while m_iterations < self.m_max_iterations:
-            # Update density adv based on current v and pos
-            self.compute_density_adv()
-            
             # Solve iteration (updates velocity)
             self.pressure_solve_iteration()
             
-            # Compute density adv again to check error?
-            # Or check error from previous density_adv?
-            # DFSPH.py: pressure_solve_iteration_kernel -> compute_density_adv -> compute_density_error
+            # Recompute density prediction for error evaluation
             self.compute_density_adv()
             
             # Error check
@@ -152,17 +157,98 @@ class SimDFSPH(SimSPH):
             wp.launch(
                 kernel=compute_density_error_kernel,
                 dim=self.particle_max_num,
-                inputs=[self.density_adv, self.materialMarks, self.base_density, self.density_error_accum]
+                inputs=[self.density_adv, self.materialMarks, self.base_density, self.base_density, self.density_error_accum]
             )
             
             total_err = self.density_error_accum.numpy()[0]
             avg_err = total_err / max(1, self.fluid_particle_num)
+            avg_density_err = avg_err
             
-            eta = self.max_error * 0.01 * self.base_density
             if avg_err <= eta:
+                converged = True
                 break
                 
             m_iterations += 1
+
+        if not converged:
+            print(
+                f"[DFSPH warning] pressure_solve reached m_max_iterations={self.m_max_iterations} "
+                f"but avg_density_err={avg_density_err:.6f} > eta={eta:.6f}"
+            )
+
+    def divergence_solve(self):
+        m_iterations_v = 0
+        avg_density_err = 0.0
+        converged = False
+        eta = (1.0 / float(self.dt)) * self.max_error_V * 0.01 * self.base_density
+
+        self.compute_density_change()
+
+        while m_iterations_v < self.m_max_iterations_v:
+            self.divergence_solve_iteration()
+            self.compute_density_change()
+
+            self.density_error_accum.zero_()
+            wp.launch(
+                kernel=compute_density_error_kernel,
+                dim=self.particle_max_num,
+                inputs=[self.density_adv, self.materialMarks, self.base_density, 0.0, self.density_error_accum]
+            )
+
+            total_err = self.density_error_accum.numpy()[0]
+            avg_err = total_err / max(1, self.fluid_particle_num)
+            avg_density_err = avg_err
+
+            if avg_err <= eta:
+                converged = True
+                break
+
+            m_iterations_v += 1
+
+        if not converged:
+            print(
+                f"[DFSPH warning] divergence_solve reached m_max_iterations_v={self.m_max_iterations_v} "
+                f"but avg_density_err={avg_density_err:.6f} > eta={eta:.6f}"
+            )
+
+    def compute_density_change(self):
+         wp.launch(
+            kernel=compute_density_change_kernel,
+            dim=self.particle_max_num,
+            inputs=[
+                self.grid.id,
+                self.x,
+                self.v,
+                self.materialMarks,
+                self.m_V,
+                self.smoothing_length,
+                int(self.dim),
+                self.density_adv
+            ]
+        )
+
+    def divergence_solve_iteration(self):
+        wp.launch(
+            kernel=compute_divergence_solve_iteration_kernel,
+            dim=self.particle_max_num,
+            inputs=[
+                self.grid.id,
+                self.x,
+                self.v,
+                self.rho,
+                self.density_adv,
+                self.dfsph_factor,
+                self.materialMarks,
+                self.m_V,
+                self.smoothing_length,
+                float(self.dt),
+                self.v,
+                self.object_id,
+                self.rbs.rigid_force,
+                self.rbs.rigid_torque,
+                self.rbs.rigid_x
+            ]
+        )
             
         # print(f"DFSPH - iterations: {m_iterations} Avg density Err: {avg_err:.4f}")
 

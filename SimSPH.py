@@ -228,7 +228,7 @@ class SimSPH:
         for i in range(self.dim):
             num_dim.append(
                 np.arange(lower_corner[i], lower_corner[i] + cube_size[i],
-                          self.particle_diameter))
+                          self.particle_diameter)) #TODO: hack: reduce particle interval for WCSPH
         num_new_particles = reduce(lambda x, y: x * y, [len(n) for n in num_dim])
         
         new_positions = np.array(np.meshgrid(*num_dim, sparse=False, indexing='ij'), dtype=np.float32)
@@ -295,13 +295,25 @@ class SimSPH:
         self.smoothing_length = self.particle_radius * 4.0
         
         # Domain
-        if "bounding_box" in params:
-            bbox = params["bounding_box"]
-            self.domain_start = np.array(bbox[0], dtype=np.float32)
-            self.domain_end = np.array(bbox[1], dtype=np.float32)
+        # if "bounding_box" in params:
+        #     bbox = params["bounding_box"]
+        #     self.domain_start = np.array(bbox[0], dtype=np.float32)
+        #     self.domain_end = np.array(bbox[1], dtype=np.float32)
+        #     ds = (self.domain_end - self.domain_start).astype(np.float32)
+        #     self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
+        # else:
+        #     self.domain_start = np.array([-10.0, -10.0, -10.0], dtype=np.float32)
+        #     self.domain_end = np.array([10.0, 10.0, 10.0], dtype=np.float32)
+        #     ds = (self.domain_end - self.domain_start).astype(np.float32)
+        #     self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
+
+        if hasattr(self, "cfg") and self.cfg is not None:
+             self.domain_start = np.array(self.cfg.get_cfg("domainStart"), dtype=np.float32)
+             self.domain_end = np.array(self.cfg.get_cfg("domainEnd"), dtype=np.float32)
             ds = (self.domain_end - self.domain_start).astype(np.float32)
             self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
         else:
+             print("Warning: Config not found, using default domain.")
             self.domain_start = np.array([-10.0, -10.0, -10.0], dtype=np.float32)
             self.domain_end = np.array([10.0, 10.0, 10.0], dtype=np.float32)
             ds = (self.domain_end - self.domain_start).astype(np.float32)
@@ -585,7 +597,10 @@ class SimSPH:
         self.particle_max_num = fluid_particle_num + rigid_particle_num + self.emitted_particle_num
         self.num_rigid_bodies = len(rigid_blocks)+len(rigid_bodies)
 
-        self.num_objects = self.num_rigid_bodies + len(fluid_blocks) + 1
+        if len(self.object_collection) > 0:
+            self.num_objects = max(self.object_collection.keys()) + 1
+        else:
+            self.num_objects = 0
 
         if len(rigid_blocks) > 0:
             print("Warning: currently rigid block functions are not completed, may lead to unexpected behaviour")
@@ -1196,7 +1211,8 @@ class SimSPH:
         #         points=self.x.numpy(), radius=self.smoothing_length, name="points", colors=(0.8, 0.3, 0.2)
         #     )
         #     self.renderer.end_frame()
-        # self.print_rigid_info()  
+        # if self.time_step >= 1500 and self.time_step % 100 == 0:
+        #     self.print_rigid_info()  
 
     def print_rigid_info(self):
         if self.num_rigid_bodies > 0:
