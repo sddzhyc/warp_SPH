@@ -50,19 +50,25 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
     # Grid Search Arguments
     parser.add_argument("--grid_search_vy", action="store_true", help="Run grid search for vy.")
-    parser.add_argument("--vy_min", type=float, default=3, help="Min vy for grid search.")
-    parser.add_argument("--vy_max", type=float, default=15, help="Max vy for grid search.")
-    parser.add_argument("--vy_samples", type=int, default=1200, help="Number of samples for vy.")
+    parser.add_argument("--grid_search_vx", action="store_true", help="Run grid search for vx.")
+    parser.add_argument("--vy_min", type=float, default=-10, help="Min vy for grid search.")
+    parser.add_argument("--vy_max", type=float, default=-3, help="Max vy for grid search.")
+    parser.add_argument("--vy_samples", type=int, default=350, help="Number of samples for vy.")
+    parser.add_argument("--vx_min", type=float, default=8, help="Min vx for grid search.")
+    parser.add_argument("--vx_max", type=float, default=13, help="Max vx for grid search.")
+    parser.add_argument("--vx_samples", type=int, default=250, help="Number of samples for vx.")
     parser.add_argument("--grad_win", type=int, default=10, help="Window size for gradient averaging.")
     parser.add_argument("--avg_grad", action="store_true", help="Use temporal averaged gradient.")
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
-
+    parser.add_argument("--custom_grad", action="store_true", help="Use custom gradient implementation.")
     h_scale = 1
-    use_custom_grad = True
+
     parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
     args = parser.parse_args()
-
+    if args.grid_search_vy and args.grid_search_vx:
+        raise ValueError("Please set only one of --grid_search_vy or --grid_search_vx.")
+    use_custom_grad = args.custom_grad
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
     # Robust scene name extraction for Windows/Unix paths
@@ -73,6 +79,8 @@ if __name__ == "__main__":
         scene_name += "g2/"
     if args.grid_search_vy:
         scene_name = "grid_search/" + scene_name + "_vy_{}-{}".format(args.vy_min, args.vy_max)
+    elif args.grid_search_vx:
+        scene_name = "grid_search/" + scene_name + "_vx_{}-{}".format(args.vx_min, args.vx_max)
     if args.avg_grad:
         scene_name += "grad_win{}".format(args.grad_win)
     if args.norm_grad:
@@ -122,12 +130,12 @@ if __name__ == "__main__":
 
         if args.method == 1:
             sim = SimDFSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
-            h_scale=h_scale, use_custom_grad=use_custom_grad)
+            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad)
         else:
             sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
-            h_scale=h_scale, use_custom_grad=use_custom_grad)
+            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad)
 
-        if args.grid_search_vy:
+        if args.grid_search_vy or args.grid_search_vx:
             import datetime
             
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -135,24 +143,53 @@ if __name__ == "__main__":
             writer = tensorboardX.SummaryWriter(log_dir=log_dir)
             print(f"Grid search logging to {log_dir}")
             
-            vy_values = np.linspace(args.vy_min, args.vy_max, args.vy_samples)
-            initial_val_np = sim.opt_v_fluid.numpy().copy()
+            if args.grid_search_vy:
+                search_axis = "vy"
+                axis_index = 1
+                axis_min = args.vy_min
+                axis_max = args.vy_max
+                axis_samples = args.vy_samples
+            else:
+                search_axis = "vx"
+                axis_index = 0
+                axis_min = args.vx_min
+                axis_max = args.vx_max
+                axis_samples = args.vx_samples
+
+            search_values = np.linspace(axis_min, axis_max, axis_samples)
+            
+            # Handle both list of variables (SkipStoneTask) and single variable (BallDemoTask)
+            if isinstance(sim.opt_var, list):
+                # Assuming the first variable in the list is the one we want to grid search on (e.g., rigid_v)
+                target_var = sim.opt_var[0]
+            else:
+                target_var = sim.opt_var
+                
+            initial_val_np = target_var.numpy().copy()
             
             loss_list = []
             grad_list = []
             
-            for i, vy in enumerate(vy_values):
-                # Update vy
+            for i, axis_value in enumerate(search_values):
+                # Update target axis component
                 current_val = initial_val_np.copy()
-                current_val[0][1] = vy # Update y component
+                current_val[0][axis_index] = axis_value
                 
-                # Re-create the array to ensure clean state (or copy_from)
-                # Important: requires_grad=True must be set
-                sim.opt_v_fluid = wp.array(current_val, dtype=wp.vec3, device=args.device, requires_grad=True)
-                # Also update sim.opt_var reference if it's used elsewhere, though backward uses opt_v_fluid
-                sim.opt_var = sim.opt_v_fluid 
+                # Re-create the array to ensure clean state
+                new_var = wp.array(current_val, dtype=wp.vec3, device=args.device, requires_grad=True)
                 
-                print(f"--- Grid Search {i+1}/{args.vy_samples}: vy = {vy:.4f} ---")
+                # Update the task's optimization variable
+                if isinstance(sim.opt_var, list):
+                    sim.opt_var[0] = new_var
+                    # Also need to update the specific task attribute if it exists
+                    if hasattr(sim.task, 'opt_rigid_v'):
+                        sim.task.opt_rigid_v = new_var
+                else:
+                    sim.opt_var = new_var
+                    if hasattr(sim.task, 'opt_v_fluid'):
+                        sim.task.opt_v_fluid = new_var
+                
+                print(f"--- Grid Search {i+1}/{axis_samples}: {search_axis} = {axis_value:.4f} ---")
                 
                 # Run simulation and backward pass
                 sim.backward()
@@ -165,29 +202,38 @@ if __name__ == "__main__":
                     
                 if args.norm_grad:
                     sim.norm_final_grad()
-                    print("fluid opt_v_fluid grad after norm:\n", sim.opt_v_fluid.grad.numpy())
-                grad_val = sim.opt_v_fluid.grad.numpy()[0] # [gx, gy, gz]
-                grad_y = grad_val[1]
+                    
+                # Get gradient from the updated variable
+                if isinstance(sim.opt_var, list):
+                    current_target_var = sim.opt_var[0]
+                else:
+                    current_target_var = sim.opt_var
+                    
+                if args.norm_grad:
+                    print("opt_var grad after norm:\n", current_target_var.grad.numpy())
+                    
+                grad_val = current_target_var.grad.numpy()[0] # [gx, gy, gz]
+                grad_axis = grad_val[axis_index]
                 
-                print(f"Loss: {loss_val:.6f}, Grad_y: {grad_y:.6f}")
+                print(f"Loss: {loss_val:.6f}, Grad_{search_axis}: {grad_axis:.6f}")
                 
                 loss_list.append(loss_val)
-                grad_list.append(grad_y)
+                grad_list.append(grad_axis)
                 
                 # Write to TensorBoard
                 # Use i as step. Log vy as a metric.
                 # TensorBoard global_step 必须是整数，为了保留小数精度，乘以 100 作为横坐标
                 # step_val = int(vy * 100)
                 writer.add_scalar('GridSearch/Loss', loss_val, i)
-                writer.add_scalar('GridSearch/Grad_y', grad_y, i)
-                writer.add_scalar('GridSearch/Vy', vy, i)
+                writer.add_scalar(f'GridSearch/Grad_{search_axis}', grad_axis, i)
+                writer.add_scalar(f'GridSearch/{search_axis.upper()}', axis_value, i)
 
             # Generate Summary Plot
-            plot_grid_search_results(vy_values, loss_list, grad_list, args.vy_min, args.vy_max, writer)
+            plot_grid_search_results(search_values, loss_list, grad_list, axis_min, axis_max, writer)
             
             # Save data to CSV
             csv_path = os.path.join(log_dir, "grid_search_data.csv")
-            save_grid_search_to_csv(vy_values, loss_list, grad_list, csv_path)
+            save_grid_search_to_csv(search_values, loss_list, grad_list, csv_path)
 
             writer.close()
             print("Grid search completed.")
@@ -214,6 +260,11 @@ if __name__ == "__main__":
                 
                 loss_val = sim.loss.numpy()
                 print(f"Iteration {i}: Loss = {loss_val}")
+                
+                # Print loss state info
+                state_info = sim.task.get_loss_state_info()
+                if state_info:
+                    print(f"Loss State Info: {state_info}")
 
                 if sim.num_objects > 0:
                     # grad check
@@ -226,7 +277,7 @@ if __name__ == "__main__":
                         if isinstance(sim.opt_var, list):
                             print("opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
                         else:
-                            print("fluid opt_v_fluid grad after norm:\n", sim.opt_var.grad.numpy())
+                            print("opt_var grad after norm:\n", sim.opt_var.grad.numpy())
 
                     if isinstance(sim.opt_var, list):
                         current_grad = [v.grad.numpy().copy() for v in sim.opt_var]
@@ -241,7 +292,7 @@ if __name__ == "__main__":
                         print("opt_var after optimization:", [v.numpy() for v in sim.opt_var])
                     else:
                         current_grad = sim.opt_var.grad.numpy().copy()
-                        print("fluid opt_v_fluid grad: ", current_grad)
+                        print("opt_var grad: ", current_grad)
                         if args.avg_grad:
                             # Use helper function for temporal averaging
                             avg_grad = compute_temporal_avg_grad(grad_buffer, current_grad, args.grad_win)
@@ -264,24 +315,31 @@ if __name__ == "__main__":
 
                         writer.add_scalar('Loss/train', loss_val, i)
                         writer.add_scalar('LR/train', sim.optimizer.lr, i)
-                        # if isinstance(sim.opt_var, list):
-                        #     grad_opt = [v.grad.numpy() for v in sim.opt_var]
-                        #     writer.add_scalar('Grad/rigid_v_norm', np.linalg.norm(grad_opt[0]), i)
-                        #     writer.add_scalar('Grad/rigid_v_x', grad_opt[0][0], i)
-                        #     writer.add_scalar('Grad/rigid_v_y', grad_opt[0][1], i)
-                        #     writer.add_scalar('Grad/rigid_v_z', grad_opt[0][2], i)
-                        #     writer.add_scalar('Grad/rigid_omega_norm', np.linalg.norm(grad_opt[1]), i)
-                        #     writer.add_scalar('Grad/rigid_omega_x', grad_opt[1][0], i)
-                        #     writer.add_scalar('Grad/rigid_omega_y', grad_opt[1][1], i)
-                        #     writer.add_scalar('Grad/rigid_omega_z', grad_opt[1][2], i)
-                        # else:
-                        #     writer.add_scalar('Grad/opt_v_fluid_norm', np.linalg.norm(grad_fluid), i)
-                        #     writer.add_scalar('Grad/opt_v_fluid_x', grad_fluid[0], i)
-                        #     writer.add_scalar('Grad/opt_v_fluid_y', grad_fluid[1], i)
-                        #     writer.add_scalar('Grad/opt_v_fluid_z', grad_fluid[2], i)
-                        #     writer.add_scalar('Grad/current_grad_fluid_y', current_grad[0][1], i)
-                
-                print("opt_var after optimization:", sim.opt_var.numpy() if not isinstance(sim.opt_var, list) else [v.numpy() for v in sim.opt_var])
+                        
+                        # Log gradients for all optimized variables from sim.opt_var
+                        if isinstance(sim.opt_var, list):
+                             opt_vars = sim.opt_var
+                        else:
+                             opt_vars = [sim.opt_var]
+
+                        for var_idx, var in enumerate(opt_vars):
+                            if var.grad:
+                                grad = var.grad.numpy()
+                                var_name = f"Var_{var_idx}"
+                                
+                                # If it's a vector/array, log norm and components of first element
+                                if len(grad.shape) > 1 or (len(grad.shape) == 1 and grad.shape[0] > 1):
+                                    grad_norm = np.linalg.norm(grad)
+                                    writer.add_scalar(f'Grad/{var_name}_norm', grad_norm, i)
+                                    
+                                    # Log first few components if available
+                                    flat_grad = grad.flatten()
+                                    for comp_idx in range(min(3, len(flat_grad))):
+                                        writer.add_scalar(f'Grad/{var_name}_comp_{comp_idx}', flat_grad[comp_idx], i)
+                                else:
+                                    # Scalar
+                                    writer.add_scalar(f'Grad/{var_name}', grad, i)
+
                 # print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
                 # if sim.num_objects > 0:
                 #     v_opt = sim.rigid_v_arrays[0].numpy()
