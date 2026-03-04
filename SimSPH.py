@@ -86,7 +86,12 @@ class SimSPH:
             # self.particle_mass = 0.01 * self.smoothing_length**3  # 为什么原example采用0.01?
             self.particle_mass = self.m_V0 * self.base_density # 设置后粒子不稳定？ # TODO:改为每个粒子分别存储
             self.dt = config.get_cfg("timeStepSize")    # 0.01 * self.smoothing_length
-            self.dynamic_visc = 0.1 # 0.025
+            self.dynamic_visc = config.get_cfg("viscosity")
+            if self.dynamic_visc is None:
+                self.dynamic_visc = 0.1 # 0.025
+            self.surface_tension = config.get_cfg("surfaceTension")
+            if self.surface_tension is None:
+                self.surface_tension = 0.0
             self.damping_coef = -0.95
             self.gravity = config.get_cfg("gravitation")[1]  # -0.1
             # 打印 m_V0、 base_density、particle_mass、smoothing_length
@@ -308,27 +313,27 @@ class SimSPH:
         #     self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
 
         if hasattr(self, "cfg") and self.cfg is not None:
-             self.domain_start = np.array(self.cfg.get_cfg("domainStart"), dtype=np.float32)
-             self.domain_end = np.array(self.cfg.get_cfg("domainEnd"), dtype=np.float32)
+            self.domain_start = np.array(self.cfg.get_cfg("domainStart"), dtype=np.float32)
+            self.domain_end = np.array(self.cfg.get_cfg("domainEnd"), dtype=np.float32)
             ds = (self.domain_end - self.domain_start).astype(np.float32)
             self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
         else:
-             print("Warning: Config not found, using default domain.")
+            print("Warning: Config not found, using default domain.")
             self.domain_start = np.array([-10.0, -10.0, -10.0], dtype=np.float32)
             self.domain_end = np.array([10.0, 10.0, 10.0], dtype=np.float32)
             ds = (self.domain_end - self.domain_start).astype(np.float32)
             self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
-            
-        # Physics Defaults
-        self.stiffness = 50000.0
-        self.exponent = 7.0
-        self.base_density = 1000.0
-        self.dim = 3
-        self.m_V0 = 0.8 * self.particle_diameter ** self.dim
-        self.particle_mass = self.m_V0 * self.base_density
-        self.dt = 0.0001
-        self.dynamic_visc = 0.01 
-        self.gravity = -9.8
+
+        # # Physics Defaults
+        # self.stiffness = 50000.0
+        # self.exponent = 7.0
+        # self.base_density = 1000.0
+        # self.dim = 3
+        # self.m_V0 = 0.8 * self.particle_diameter ** self.dim
+        # self.particle_mass = self.m_V0 * self.base_density
+        # self.dt = 0.0001
+        # self.dynamic_visc = 0.01
+        # self.gravity = -9.8
         
         print(f"Loaded params: radius={self.particle_radius}, m_V0={self.m_V0}")
         
@@ -1117,6 +1122,7 @@ class SimSPH:
             self.viscous_forces,
             self.object_id,
             self.rbs,
+            self.surface_tension,
             self.gravity,
             self.a
         ],
