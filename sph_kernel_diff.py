@@ -14,7 +14,6 @@
 ###########################################################################
 import warp as wp
 
-from kernel_func import diff_pressure_kernel, diff_viscous_kernel
 from norm_grad_utils import norm_grad_vec3
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, is_dynamic_rigid_body
 # from particle_system_np import ParticleSystem
@@ -433,7 +432,7 @@ def simulate_collisions_warp(particle_v: wp.array(dtype=wp.vec3), idx: int, n: w
 def enforce_boundary_3D_warp(
     particle_x: wp.array(dtype=wp.vec3),
     particle_v: wp.array(dtype=wp.vec3),
-    mtr : MaterialMarks,
+    mtr: MaterialMarks,
     lower_bound: wp.vec3,
     upper_bound: wp.vec3,
     padding: float,

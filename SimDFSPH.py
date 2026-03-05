@@ -2,7 +2,8 @@ import warp as wp
 import numpy as np
 from SimSPH import SimSPH
 from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_density_change_kernel, compute_divergence_solve_iteration_kernel, compute_pressure_solve_iteration_kernel
-from sph_kernel import compute_density, compute_non_presure_forces, kick, drift
+from sph_kernel import compute_non_presure_forces, kick, drift
+from sph_kernel_diff import compute_density
 
 class SimDFSPH(SimSPH):
     def __init__(self, config=None, container=None, method=0, stage_path="example_sph.usd", ply_path=None):
@@ -59,12 +60,12 @@ class SimDFSPH(SimSPH):
             inputs=[
                 self.grid.id,
                 self.x,
-                self.rho,
                 1.0, # density_normalization set to 1.0 as cubic_kernel is already normalized
                 self.smoothing_length,
                 self.materialMarks,
                 self.m_V,
-                self.base_density
+                self.base_density,
+                self.rho,
             ]
         )
         

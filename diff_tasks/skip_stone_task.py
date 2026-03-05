@@ -148,7 +148,7 @@ class SkipStoneTask(Task):
         return info
 
     def init_simulation_state(self, t):
-        if t == 0 and self.sim.num_objects > 0:
+        if t == 0 and self.sim.num_objects > 0: # TODO: 修改调用位置 
             # IMPORTANT: must stay in tape and avoid numpy() / re-allocations,
             # otherwise autograd graph from opt vars to simulation state is broken.
             with self.sim.tapes[-1]:

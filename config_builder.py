@@ -5,6 +5,7 @@ import json
 class SimConfig:
     def __init__(self, scene_file_path) -> None:
         self.config = None
+        self.scene_file_path = scene_file_path
         with open(scene_file_path, "r") as f:
             self.config = json.load(f)
         # print(self.config)
