@@ -97,6 +97,7 @@ def compute_non_pressure_forces(
     mtr : MaterialMarks,
     m_V: wp.array(dtype=float),
     base_density: float,
+    gravity: float,
     object_id: wp.array(dtype=wp.int32),
     rbs :RigidBodies,
     particle_viscous_force_out: wp.array(dtype=wp.vec3)
@@ -140,7 +141,7 @@ def compute_non_pressure_forces(
                 #         rbs.rigid_force[r_id] += force
                 #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
                 
-    particle_viscous_force_out[i] = viscous_normalization * viscous_force
+    particle_viscous_force_out[i] = viscous_normalization * viscous_force + wp.vec3(0.0, gravity, 0.0)
 
 @wp.kernel
 def get_acceleration(

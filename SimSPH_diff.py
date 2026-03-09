@@ -36,18 +36,18 @@ def sum_grad_fluid(
 class SimSPH_diff(SimSPH):
 
     def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, verbose=False):
-        super().__init__(config, container, 0, stage_path, ply_path)
+        super().__init__(config, container, 0, stage_path, ply_path, h_scale)
         self.ply_path = ply_path
         self.sim_steps = sim_steps
         self.train_rate = lr
         self.use_custom_grad = use_custom_grad
         self.use_norm_grad = use_norm_grad
         self.init_diff_phys(self.sim_steps)
-        self.init_diff_task()
-        self.smoothing_length *= h_scale
+        self.init_diff_task() 
 
     def init_diff_phys(self, sim_steps):
         self.sim_steps = sim_steps
+        allocate_pressure_arrays = self.__class__.__name__ != "SimDFSPH_diff"
 
         self.x_arrays = []
         self.v_arrays = []
@@ -63,7 +63,8 @@ class SimSPH_diff(SimSPH):
             self.x_arrays.append(wp.zeros_like(self.x, requires_grad=True))
             self.v_arrays.append(wp.zeros_like(self.v, requires_grad=True))
             self.rho_arrays.append(wp.zeros_like(self.rho, requires_grad=True))
-            self.pressure_arrays.append(wp.zeros_like(self.pressure, requires_grad=True))
+            if allocate_pressure_arrays:
+                self.pressure_arrays.append(wp.zeros_like(self.pressure, requires_grad=True))
             self.a_arrays.append(wp.zeros_like(self.a, requires_grad=True))
             # self.viscous_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
             # self.pressure_forces_arrays.append(wp.zeros_like(self.v, requires_grad=True))
@@ -125,8 +126,12 @@ class SimSPH_diff(SimSPH):
 
     def init_diff_task(self):
         # Initialize Task (which handles targets and optimizer)
-        if self.ply_path and ("skip_stone" in self.ply_path):
-            print("Initializing SkipStoneTask based on ply_path.")
+        scene_file_path = ""
+        if hasattr(self, "cfg") and self.cfg is not None:
+            scene_file_path = getattr(self.cfg, "scene_file_path", "")
+
+        if scene_file_path and ("skip_stone" in scene_file_path.lower()):
+            print("Initializing SkipStoneTask based on scene_file.")
             self.task = SkipStoneTask(self)
         else:
             self.task = BallDemoTask(self)
@@ -188,7 +193,8 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
 
         for t in range(0, self.sim_steps + 1):
-            self.pressure_arrays[t].zero_()
+            if t < len(self.pressure_arrays):
+                self.pressure_arrays[t].zero_()
             self.a_arrays[t].zero_()
             # self.viscous_forces_arrays[t].zero_()
             # self.pressure_forces_arrays[t].zero_()
@@ -284,27 +290,8 @@ class SimSPH_diff(SimSPH):
         # Result logic...
         # self.tape.visualize("sph_graph.dot") # Cannot visualize split tapes easily as one graph
 
-
-
     def norm_final_grad(self):
-        sum_sq = wp.zeros(1, dtype=float)
-
-        # TODO: 检查代码冗余
-        # 1. Normalize x_arrays[0].grad
-        if self.x_arrays[0].grad:
-            wp.launch(sum_L2_states_t, dim=self.particle_max_num, inputs=[self.x_arrays[0].grad, sum_sq])
-            l2_x = np.sqrt(sum_sq.numpy()[0])
-            if l2_x > 1e-10:
-                wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[self.x_arrays[0].grad, l2_x])
-
-        # 2. Normalize v_arrays[0].grad
-        sum_sq.zero_()
         if self.v_arrays[0].grad:
-            wp.launch(sum_L2_states_t, dim=self.particle_max_num, inputs=[self.v_arrays[0].grad, sum_sq])
-            l2_v = np.sqrt(sum_sq.numpy()[0])
-            if l2_v > 1e-10:
-                wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[self.v_arrays[0].grad, l2_v])
-            
             # Compute final opt_var gradient if it's fluid velocity
             # We delegate this to the task if needed, or handle it generically
             if hasattr(self.task, 'norm_final_grad'):
@@ -455,6 +442,7 @@ class SimSPH_diff(SimSPH):
                     self.materialMarks,
                     self.m_V,
                     self.base_density,
+                    0.0,
                     self.object_id,
                     self.rbs
                 ],
@@ -547,7 +535,10 @@ class SimSPH_diff(SimSPH):
         np_mV = self.m_V.numpy()
         np_obj_id = self.object_id.numpy()
         # also export per-particle force diagnostics (split vec3 into scalar components)
-        pf = self.pressure_arrays[time_step].numpy()
+        if time_step < len(self.pressure_arrays):
+            pf = self.pressure_arrays[time_step].numpy()
+        else:
+            pf = np.zeros(self.particle_max_num, dtype=np.float32)
         vf = self.viscous_forces_arrays[time_step].numpy()
         np_a = self.a_arrays[time_step].numpy()
         np_v = self.v_arrays[time_step].numpy()
@@ -558,7 +549,10 @@ class SimSPH_diff(SimSPH):
         grad_x = self.x_arrays[time_step].grad.numpy()
         grad_v = self.v_arrays[time_step].grad.numpy()
         grad_rho = self.rho_arrays[time_step].grad.numpy()
-        grad_p = self.pressure_arrays[time_step].grad.numpy()
+        if time_step < len(self.pressure_arrays) and self.pressure_arrays[time_step].grad is not None:
+            grad_p = self.pressure_arrays[time_step].grad.numpy()
+        else:
+            grad_p = np.zeros(self.particle_max_num, dtype=np.float32)
         grad_a = self.a_arrays[time_step].grad.numpy()
 
         out_path = series_prefix.format(cnt_ply)

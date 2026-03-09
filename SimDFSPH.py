@@ -1,7 +1,7 @@
 import warp as wp
 import numpy as np
 from SimSPH import SimSPH
-from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_density_change_kernel, compute_divergence_solve_iteration_kernel, compute_pressure_solve_iteration_kernel
+from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_density_change_kernel, divergence_solve_iteration_kernel, pressure_solve_iteration_kernel
 from sph_kernel import compute_non_presure_forces, kick, drift
 from sph_kernel_diff import compute_density
 
@@ -205,7 +205,7 @@ class SimDFSPH(SimSPH):
                 break
 
             m_iterations_v += 1
-
+        print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_density_err}")
         if not converged:
             print(
                 f"[DFSPH warning] divergence_solve reached m_max_iterations_v={self.m_max_iterations_v} "
@@ -230,7 +230,7 @@ class SimDFSPH(SimSPH):
 
     def divergence_solve_iteration(self):
         wp.launch(
-            kernel=compute_divergence_solve_iteration_kernel,
+            kernel=divergence_solve_iteration_kernel,
             dim=self.particle_max_num,
             inputs=[
                 self.grid.id,
@@ -243,11 +243,13 @@ class SimDFSPH(SimSPH):
                 self.m_V,
                 self.smoothing_length,
                 float(self.dt),
-                self.v,
                 self.object_id,
+                self.rbs.rigid_x
+            ],
+            outputs=[
+                self.v,
                 self.rbs.rigid_force,
                 self.rbs.rigid_torque,
-                self.rbs.rigid_x
             ]
         )
             
@@ -273,7 +275,7 @@ class SimDFSPH(SimSPH):
         
     def pressure_solve_iteration(self):
         wp.launch(
-            kernel=compute_pressure_solve_iteration_kernel,
+            kernel=pressure_solve_iteration_kernel,
             dim=self.particle_max_num,
             inputs=[
                 self.grid.id,

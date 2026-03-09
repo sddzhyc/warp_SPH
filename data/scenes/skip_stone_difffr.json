@@ -1,15 +1,15 @@
 {
 	"Configuration": 
 	{
-		"fps" : 60,
-		"domainStart": [-3.0, -0.05, -0.77],
-		"domainEnd": [3.0, 0.8500000238418579, 0.77],
+		"fps" : 240,
+		"domainStart": [-2.1, 0, -0.85],
+		"domainEnd": [2.1, 3.0, 0.85],
 		"numberOfStepsPerRenderUpdate": 1,
 		"density0": 1000, 
 		"simulationMethod": 0,
 		"gravitation": [0.0, -9.81, 0.0],
 		"timeStepSize": 0.00016,
-		"stiffness": 7000,
+		"stiffness": 50000,
 		"exponent": 7,
 		"boundaryHandlingMethod": 0,
 		"exportFrame": false,
@@ -17,19 +17,33 @@
 		"exportObj": false,
 		"stepNum": 2,
 		"maxIterNum": 20,
-		"particleRadius": 0.026, 
+		"particleRadius": 0.025, 
 		"radius":  0.025,
-		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
 		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]}
 	},
+	"FluidBlocks": [
+	{
+		"objectId": 0,
+		"plyFile_old": "./skip_stones/fluid.ply",
+		"start": [-2, 0.1, -0.75],
+		"end": [2, 0.9, 0.75],
+		"translation": [0, 0.0, 0.0],
+		"scale": [1,1,1],
+		"velocity": [0.0, 0.0, 0.0],
+		"density": 1000.0,
+		"color": [50, 100, 200]
+	}],
 	"RigidBodies": [
 	{
 		"objectId": 1,
-		"plyFile": "./skip_stones/ball.ply",
-		"translation": [-2, 1.2, 0],
+		"geometryFile": "./data/models/sphere.obj",
+		"translation": [-2,1.2,0],
 		"rotationAxis": [0, 0, 1],
 		"rotationAngle": 0,
-		"velocity": [25, -16, 0.0],
+		"scale": [0.2, 0.05, 0.2],
+		"velocity": [10, -5, 0.0],
+		"velocity_target": [10, -5, 0.0],
+		"velocity_old": [25, -16, 0.0],
 		"angularVelocity": [-3, 20, 6],
 		"density": 2000,
 		"isDynamic": true,

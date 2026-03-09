@@ -116,6 +116,7 @@ def compute_non_presure_forces(
     particle_viscous_force: wp.array(dtype=wp.vec3),
     object_id: wp.array(dtype=wp.int32),
     rbs :RigidBodies,
+    surface_tension: float,
     gravity: float,
     a_non_p : wp.array(dtype=wp.vec3),
 ):
@@ -133,6 +134,8 @@ def compute_non_presure_forces(
     v = particle_v[i]
     
     viscous_force = wp.vec3(0.0, 0.0, 0.0)
+    surface_tension_acc = wp.vec3(0.0, 0.0, 0.0)
+    particle_diameter = 0.5 * smoothing_length
     
     # particle contact
     neighbors = wp.hash_grid_query(grid, x, smoothing_length)
@@ -149,6 +152,15 @@ def compute_non_presure_forces(
                 
                 if mtr.material[index] == MaterialType.FLUID:
                     viscous_force += base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
+                    r = x - particle_x[index]
+                    r2 = wp.dot(r, r)
+                    m_i = wp.max(m_V[i] * base_density, 1.0e-8)
+                    m_j = m_V[index] * base_density
+                    if r2 > particle_diameter * particle_diameter:
+                        surface_tension_acc += -surface_tension / m_i * m_j * r * cubic_kernel(r, smoothing_length)
+                    else:
+                        r_ref = wp.vec3(particle_diameter, 0.0, 0.0)
+                        surface_tension_acc += -surface_tension / m_i * m_j * r * cubic_kernel(r_ref, smoothing_length)
                 # elif mtr.material[index] == MaterialType.SOLID:
                 #     term = base_density * m_V[index] * diff_viscous_kernel_cubic(relative_position, v, neighbor_v, neighbor_rho, smoothing_length)
                 #     viscous_force += term
@@ -159,7 +171,7 @@ def compute_non_presure_forces(
                 #         rbs.rigid_torque[r_id] += wp.cross(x - rbs.rigid_x[r_id], force)
                 
     particle_viscous_force[i] = viscous_normalization * viscous_force
-    a_non_p[i] =  particle_viscous_force[i] + wp.vec3(0.0, gravity, 0.0)
+    a_non_p[i] = particle_viscous_force[i] + surface_tension_acc + wp.vec3(0.0, gravity, 0.0)
 
 @wp.kernel
 def compute_pressure_a(

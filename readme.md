@@ -35,8 +35,14 @@ python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train
 python .\run_simulation_diff.py --scene_file data\scenes\diff-demo.json --train --ply_path .\ply_states\particle_object_000030.ply
 ```
 
-
 python .\run_simulation_diff.py --scene_file data\scenes\diff-demo2-1.json --train --iters 700 --lr 0.005
+
+#### stone skipping
+
+ python .\run_simulation_diff.py --ply_path .\skip_stones\  --scene_file .\data\scenes\skip_stone_difffr.json --train --iters 400 --lr 0.05 --num_timesteps 1400
+
+  python .\run_simulation_diff.py --ply_path .\skip_stones\  --scene_file .\data\scenes\skip_stone_difffr.json --train --iters 400 --lr 0.05 --num_timesteps 1400
+
 ## Reference
 
 ### reference resopitory

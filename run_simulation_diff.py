@@ -189,7 +189,7 @@ if __name__ == "__main__":
                     if hasattr(sim.task, 'opt_v_fluid'):
                         sim.task.opt_v_fluid = new_var
                 
-                print(f"--- Grid Search {i+1}/{axis_samples}: {search_axis} = {axis_value:.4f} ---")
+                print(f"------------ Grid Search {i+1}/{axis_samples}: {search_axis} = {axis_value:.4f} ------------")
                 
                 # Run simulation and backward pass
                 sim.backward()
@@ -199,18 +199,15 @@ if __name__ == "__main__":
                 if np.isnan(loss_val):
                     print("Loss is NaN!")
                     loss_val = 1e9 # sentinel
-                    
-                if args.norm_grad:
-                    sim.norm_final_grad()
-                    
                 # Get gradient from the updated variable
                 if isinstance(sim.opt_var, list):
                     current_target_var = sim.opt_var[0]
                 else:
                     current_target_var = sim.opt_var
-                    
+                print(f"[grad] opt_var grad before norm:\n", current_target_var.grad.numpy())
                 if args.norm_grad:
-                    print("opt_var grad after norm:\n", current_target_var.grad.numpy())
+                    sim.norm_final_grad()
+                    print("[grad] opt_var grad after norm:\n", current_target_var.grad.numpy())
                     
                 grad_val = current_target_var.grad.numpy()[0] # [gx, gy, gz]
                 grad_axis = grad_val[axis_index]
@@ -275,13 +272,13 @@ if __name__ == "__main__":
                     if args.norm_grad:
                         sim.norm_final_grad()
                         if isinstance(sim.opt_var, list):
-                            print("opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
+                            print("[grad] opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
                         else:
-                            print("opt_var grad after norm:\n", sim.opt_var.grad.numpy())
+                            print("[grad] opt_var grad after norm:\n", sim.opt_var.grad.numpy())
 
                     if isinstance(sim.opt_var, list):
                         current_grad = [v.grad.numpy().copy() for v in sim.opt_var]
-                        print("opt_var grad: ", current_grad)
+                        print("[grad] opt_var grad: ", current_grad)
                         if args.avg_grad:
                             # avg_grad not supported for list opt_var
                             print("avg_grad not supported for list opt_var")
@@ -292,12 +289,12 @@ if __name__ == "__main__":
                         print("opt_var after optimization:", [v.numpy() for v in sim.opt_var])
                     else:
                         current_grad = sim.opt_var.grad.numpy().copy()
-                        print("opt_var grad: ", current_grad)
+                        print("[grad] opt_var grad: ", current_grad)
                         if args.avg_grad:
                             # Use helper function for temporal averaging
                             avg_grad = compute_temporal_avg_grad(grad_buffer, current_grad, args.grad_win)
                             
-                            print("fluid avg grad:\n", avg_grad)
+                            print("[grad] fluid avg grad:\n", avg_grad)
                             
                             # Create warp array for averaged gradient
                             avg_grad_wp = wp.array(avg_grad, dtype=sim.opt_var.dtype, device=args.device)

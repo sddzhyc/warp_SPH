@@ -3,7 +3,8 @@ from kernel_utils import add_ball_kernel, add_particles_kernel
 
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info, compute_rigid_cm_mass_kernel, finalize_rigid_cm_kernel, compute_rigid_inertia_kernel, finalize_rigid_inertia_kernel
 from sim_utils import export_ply_points, load_ply_points
-from sph_kernel import compute_non_presure_forces, compute_pressure, compute_pressure_a, kick, drift
+from sph_kernel import compute_non_presure_forces, compute_pressure, compute_pressure_a
+from sph_kernel_diff import compute_density, enforce_boundary_3D_warp, kick as kick_diff, drift as drift_diff
 
 import os
 import numpy as np
@@ -11,7 +12,6 @@ import warp as wp
 import trimesh as tm
 import json
 from functools import reduce
-from sph_kernel_diff import compute_density, enforce_boundary_3D_warp
 class SimSPH:
     def initialize(self):
         print(f"Initialized particle volumes m_V0 = {self.m_V0}")
@@ -34,13 +34,14 @@ class SimSPH:
         print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
-    def __init__(self, config = None, container = None, method=0, stage_path="example_sph.usd", ply_path=None):
+    def __init__(self, config = None, container = None, method=0, stage_path="example_sph.usd", ply_path=None, h_scale=1.0):
         """
         If `container` (a `BaseContainer`) is provided, SimSPH will use the container's
         particle arrays as the source of truth. Otherwise it falls back to the original
         random-initialized behavior.
         """
         self.ps = container
+        self.h_scale = float(h_scale)
 
         self.verbose = False
         # render params
@@ -74,7 +75,7 @@ class SimSPH:
             self.particle_radius = config.get_cfg("particleRadius")
             # self.smoothing_length = self.particle_radius     # 0.8
             self.particle_diameter = 2 * self.particle_radius
-            self.smoothing_length = self.particle_radius * 4.0
+            self.smoothing_length = self.particle_radius * 4.0 * self.h_scale
             # self.smoothing_length = 1.8 * self.particle_radius * 2.0 # 0.8 # 一般为排列距离的1.3到1.5倍 #taichi版本：self.support_radius = self.particle_radius * 4.0  # support radius
 
             self.stiffness = config.get_cfg("stiffness") # 20
@@ -379,7 +380,7 @@ class SimSPH:
             
         self.particle_radius = params.get("radius", 0.025)
         self.particle_diameter = 2 * self.particle_radius
-        self.smoothing_length = self.particle_radius * 4.0
+        self.smoothing_length = self.particle_radius * 4.0 * self.h_scale
         
         # Domain
         # if "bounding_box" in params:
@@ -1275,10 +1276,10 @@ class SimSPH:
                 ]
         )
         # kick
-        wp.launch(kernel=kick, dim=self.particle_max_num, inputs=[self.v, self.a, self.dt])
+        wp.launch(kernel=kick_diff, dim=self.particle_max_num, inputs=[self.a, self.dt, self.v, self.v])
 
         # drift
-        wp.launch(kernel=drift, dim=self.particle_max_num, inputs=[self.x, self.v, self.dt])
+        wp.launch(kernel=drift_diff, dim=self.particle_max_num, inputs=[self.x, self.v, self.dt, self.x])
 
     def step(self, t):
         self.time_step = t
