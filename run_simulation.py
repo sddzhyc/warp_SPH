@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 import warp as wp
 
 from Balance.solid_balance_v6.PipeEnvSolver import PipeEnvSolver
@@ -24,6 +25,8 @@ if __name__ == "__main__":
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for SimSPH, 1 for SimDFSPH.")
+    parser.add_argument("--benchmark", action="store_true", help="Enable performance benchmark mode.")
+    parser.add_argument("--benchmark_print_interval", type=int, default=50, help="Print benchmark stats every N simulation steps.")
     args = parser.parse_args()
 
     scene_path = args.scene_file
@@ -50,6 +53,11 @@ if __name__ == "__main__":
     output_interval = int(frame_time / config.get_cfg("timeStepSize")) # int(0.016 / config.get_cfg("timeStepSize"))
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
+
+    if args.benchmark:
+        output_ply = False
+        print(f"Benchmark mode enabled: particle export disabled, print interval = {args.benchmark_print_interval} steps")
+
     # Use zero-padded frame index in filename
     method = args.method
     if method == 1:
@@ -82,6 +90,9 @@ if __name__ == "__main__":
             example = SimSPH(config, stage_path=args.stage_path, container = container, ply_path=args.ply_path)
         cnt = 0
         cnt_ply = 0
+        total_step_time = 0.0
+        measured_steps = 0
+
         for time_step in range(args.num_frames):
             # example.render()
             if cnt % output_interval == 0:
@@ -95,12 +106,34 @@ if __name__ == "__main__":
                             f.write(e)
                 cnt_ply += 1
 
+            step_start = time.perf_counter()
             example.step(time_step)
+            step_end = time.perf_counter()
+
+            if args.benchmark:
+                total_step_time += (step_end - step_start)
+                measured_steps += 1
+
+                if measured_steps % args.benchmark_print_interval == 0:
+                    avg_step_time_ms = (total_step_time / measured_steps) * 1000.0
+                    print(
+                        f"[Benchmark] step={measured_steps}/{args.num_frames}, "
+                        f"avg_step_time={avg_step_time_ms:.4f} ms"
+                    )
+
             cnt += 1
             # example.partio_export()
             #if output_frames:
                 # if cnt % output_interval == 0:
                 #     window.write_image(f"{scene_name}_output_img/{cnt:06}.png")
+
+        if args.benchmark and measured_steps > 0:
+            avg_step_time_ms = (total_step_time / measured_steps) * 1000.0
+            print(
+                f"[Benchmark] completed {measured_steps} steps, "
+                f"final_avg_step_time={avg_step_time_ms:.4f} ms"
+            )
+
         # if example.renderer:
         #     example.renderer.save()
     movement_speed = 0.02
