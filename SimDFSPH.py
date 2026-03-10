@@ -14,7 +14,7 @@ class SimDFSPH(SimSPH):
         self.m_max_iterations = 100
         self.max_error_V = 0.1
         self.m_max_iterations_v = 100
-        self.enable_divergence_solver = False
+        self.enable_divergence_solver = True
         self.enable_pressure_solver = True
         self.init_DFSPH()
         # Error reduction buffer
@@ -159,7 +159,7 @@ class SimDFSPH(SimSPH):
             total_err = self.density_error_accum.numpy()[0]
             avg_err = total_err / max(1, self.fluid_particle_num)
             avg_density_err = avg_err
-            
+            # print(f"DFSPH - iteration P: {m_iterations} Avg density err: {avg_density_err}")
             if avg_err <= eta:
                 converged = True
                 break
@@ -200,7 +200,7 @@ class SimDFSPH(SimSPH):
                 break
 
             m_iterations_v += 1
-        print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_density_err}")
+        # print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_density_err}")
         if not converged:
             print(
                 f"[DFSPH warning] divergence_solve reached m_max_iterations_v={self.m_max_iterations_v} "
@@ -287,8 +287,6 @@ class SimDFSPH(SimSPH):
             'density_adv': np_density_adv,
             'density_change': np_density_change,
         })
-            
-        # print(f"DFSPH - iterations: {m_iterations} Avg density Err: {avg_err:.4f}")
 
     def compute_density_adv(self):
          wp.launch(

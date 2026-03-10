@@ -55,7 +55,7 @@ def compute_dfsph_factor_kernel(
     sum_grad_p_k += wp.length_sq(grad_p_i)
 
     if sum_grad_p_k > 1e-6:
-        dfsph_factor_out[i] = -1.0 / sum_grad_p_k # TODO: check sign
+        dfsph_factor_out[i] = 1.0 / sum_grad_p_k # TODO: check sign
     else:
         dfsph_factor_out[i] = 0.0
 
@@ -229,7 +229,7 @@ def pressure_solve_iteration_kernel(
                 
                 if wp.abs(k_sum) > m_eps:
                     grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
-                    grad_p_j = -m_V[index] * grad_W
+                    grad_p_j = m_V[index] * grad_W
                     
                     force = -dt * k_sum * grad_p_j
                     vel_change_sum += force
@@ -237,7 +237,7 @@ def pressure_solve_iteration_kernel(
             elif mtr.material[index] == MaterialType.SOLID:
                  if wp.abs(k_i) > m_eps:
                     grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
-                    grad_p_j = -m_V[index] * grad_W
+                    grad_p_j = m_V[index] * grad_W
                     
                     vel_change = -dt * k_i * grad_p_j
                     
@@ -306,13 +306,13 @@ def divergence_solve_iteration_kernel(
                 k_sum = k_i + k_j
 
                 if wp.abs(k_sum) > m_eps:
-                    grad_w = -cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
                     grad_p_j = m_V[index] * grad_w
                     vel_change_sum += -dt * k_sum * grad_p_j
 
             elif mtr.material[index] == MaterialType.SOLID:
                 if wp.abs(k_i) > m_eps:
-                    grad_w = -cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
                     grad_p_j = m_V[index] * grad_w
                     vel_change = -dt * k_i * grad_p_j
                     vel_change_sum += vel_change
@@ -368,9 +368,9 @@ def pressure_solve_iteration_kernel_fluid(
 
             if wp.abs(k_sum) > m_eps:
                 if use_custom_grad:
-                    grad_w = -cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
                 else:
-                    grad_w = -cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
                 grad_p_j = m_V[index] * grad_w
                 vel_change_sum += -dt * k_sum * grad_p_j
 
@@ -420,9 +420,9 @@ def pressure_solve_iteration_kernel_solid(
         if d < smoothing_length and mtr.material[index] == MaterialType.SOLID:
             if wp.abs(k_i) > m_eps:
                 if use_custom_grad:
-                    grad_w = -cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
                 else:
-                    grad_w = -cubic_kernel_derivative(r_vec, smoothing_length)
+                    grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
                 grad_p_j = m_V[index] * grad_w
                 vel_change = -dt * k_i * grad_p_j
                 vel_change_sum += vel_change
@@ -481,7 +481,7 @@ def divergence_solve_iteration_kernel_fluid(
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
                 else:
                     grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
-                grad_p_j = -m_V[index] * grad_w
+                grad_p_j = m_V[index] * grad_w
                 vel_change_sum += -dt * k_sum * grad_p_j
 
     wp.atomic_add(particle_v_out, i, vel_change_sum)
@@ -532,7 +532,7 @@ def divergence_solve_iteration_kernel_solid(
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
                 else:
                     grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
-                grad_p_j = -m_V[index] * grad_w
+                grad_p_j = m_V[index] * grad_w
                 vel_change = -dt * k_i * grad_p_j
                 vel_change_sum += vel_change
 
