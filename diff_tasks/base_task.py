@@ -13,7 +13,7 @@ class Task:
     def compute_loss(self):
         pass
 
-    def init_simulation_state(self, t):
+    def init_simulation_state(self):
         pass
 
     def clear_grad(self):

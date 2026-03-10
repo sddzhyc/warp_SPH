@@ -109,14 +109,13 @@ class BallDemoTask(Task):
     def get_optimized_vars(self):
         return [self.opt_v_fluid]
 
-    def init_simulation_state(self, t):
-        if t == 0:
-            with self.sim.tapes[-1]:
-                wp.launch(
-                    kernel=assign_initial_fluid_velocity,
-                    dim=self.sim.particle_max_num,
-                    inputs=[self.sim.v_arrays[0], self.opt_v_fluid, self.sim.materialMarks]
-                )
+    def init_simulation_state(self):
+        with self.sim.tapes[-1]:
+            wp.launch(
+                kernel=assign_initial_fluid_velocity,
+                dim=self.sim.particle_max_num,
+                inputs=[self.sim.v_arrays[0], self.opt_v_fluid, self.sim.materialMarks]
+            )
 
     def clear_grad(self):
         if self.opt_v_fluid.grad:

@@ -31,12 +31,16 @@ def export_ply_points(path: str, pos: np.ndarray, attrs: dict, text: bool = Fals
     path: output .ply path
     pos: (N,3) float32 numpy array
     attrs: dict of {name: (N,) array-like} extra per-vertex scalars (e.g., rho, mV)
+        Note: field 'particle_id' is always exported and set to [0, 1, ..., N-1].
     """
     pos = np.asarray(pos)
     n = int(pos.shape[0])
 
     # Keep integer attributes as integer in PLY for both correctness and speed,
     # and keep float attributes in float32.
+    attrs = dict(attrs) if attrs is not None else {}
+    attrs['particle_id'] = np.arange(n, dtype=np.int32)
+
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4')]
     attr_arrays = {}
     for name, arr in attrs.items():

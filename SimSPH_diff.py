@@ -211,8 +211,23 @@ class SimSPH_diff(SimSPH):
             #print(f"Normalizing gradient with L2 norm: {l2}")
             if l2 > 1e-10:
                 wp.launch(norm_states_grad, dim=self.particle_max_num, inputs=[grad_array.grad, l2])
-# 15.136797 -180.5951     15.135387
-# 15.137694 -180.59273    15.134274
+
+    def backward_single_tape(self):
+        """Use one tape for full forward recording and one-shot backward (no grad normalization)."""
+        single_tape = wp.Tape()
+        self.tapes.append(single_tape)
+
+        with wp.ScopedTimer("Forward Simulation"):
+            self.task.init_simulation_state()
+            for t in range(self.sim_steps):
+                self.step(t)
+            with single_tape:
+                self.task.compute_loss()
+
+        print(f"Completed differentiable forward pass {self.sim_steps} steps, Starting backward pass...")
+        with wp.ScopedTimer("Backward Bropagation"):
+            single_tape.backward(self.loss)
+
     def backward(self):
         # If I want to split tapes, I should also follow this pattern or rely on forward() being called before backward().
         # Standard PyTorch/Warp pattern: 
@@ -230,16 +245,23 @@ class SimSPH_diff(SimSPH):
         self.clear_grad()
         self.reset()
         self.tapes = []
+        self.loss_tape = None
 
         t_forward_start = time.perf_counter()
 
+        # Fast path: when gradient normalization is disabled,
+        # use a single tape for full forward recording and one-shot backward.
+        if not self.use_norm_grad:
+            self.backward_single_tape()
+            return
+        
         for t in range(self.sim_steps):
             # advance state from t -> t+1
             current_tape = wp.Tape()
             self.tapes.append(current_tape)
             # Set optimized initial rigid velocities if applicable
-            self.task.init_simulation_state(t)
-
+            if t == 0:
+                self.task.init_simulation_state()
             self.step(t)
             # print(f"Completed forward step {t+1}/{self.sim_steps}")
         
@@ -248,7 +270,7 @@ class SimSPH_diff(SimSPH):
         with self.loss_tape:
             self.task.compute_loss()
 
-        wp.synchronize()  # 强制等待 GPU 完成并刷新输出
+        # wp.synchronize()  # 强制等待 GPU 完成并刷新输出
         t_forward_end = time.perf_counter()
         print(f"Forward simulation time: {t_forward_end - t_forward_start:.4f}s")
         print(f"Completed differentiable forward pass {self.sim_steps} steps, Starting backward pass...")
@@ -259,11 +281,6 @@ class SimSPH_diff(SimSPH):
         
         # We iterate backwards from end to start
         for t in reversed(range(self.sim_steps)):
-            # 1. Normalize gradients at t+1 before propagating to t?
-            # Actually, gradients flow from t+1 to t.
-            # After loss_tape.backward(), grads at step `sim_steps` are populated.
-            # We should normalize them before backing through step `sim_steps-1 to sim_steps`.
-            
             # Normalize gradients at t+1 (x_arrays[t+1], v_arrays[t+1])
             if self.use_norm_grad:
                 self.normalize_single_state_grad(self.x_arrays[t+1])
@@ -279,7 +296,7 @@ class SimSPH_diff(SimSPH):
             self.normalize_single_state_grad(self.x_arrays[0])
             self.normalize_single_state_grad(self.v_arrays[0])
 
-        wp.synchronize()
+        #wp.synchronize()
         t_backward_end = time.perf_counter()
         print(f"Backward propagation time: {t_backward_end - t_backward_start:.4f}s")
         print(f"Total backward() time: {t_backward_end - t_forward_start:.4f}s")

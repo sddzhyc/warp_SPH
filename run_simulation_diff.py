@@ -40,7 +40,7 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_timesteps", type=int, default=1400, help="Total number of frames.")
+    parser.add_argument("--num_timesteps", type=int, default=160, help="Total number of frames.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--test_gradient", action="store_true", help="Run gradient computation test.")
     parser.add_argument("--train", action="store_true", help="Run optimization training loop.")
