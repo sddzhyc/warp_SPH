@@ -21,23 +21,30 @@ class SimDFSPH_diff(SimSPH_diff):
         self.density_error_accum = wp.zeros(1, dtype=float)
 
         self.dfsph_factor_arrays = []
-        self.density_change_buf_arrays = []
-        self.density_adv_buf_arrays = []
+        self.density_change_arrays = []
+        self.density_adv_arrays = []
 
         for _ in range(self.sim_steps + 1):
             self.dfsph_factor_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
-            self.density_change_buf_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
-            self.density_adv_buf_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
+            self.density_change_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
+            self.density_adv_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
 
     def clear_grad(self):
         super().clear_grad()
 
-        for arrs in [self.dfsph_factor_arrays, self.density_change_buf_arrays, self.density_adv_buf_arrays]:
+        for arrs in [self.dfsph_factor_arrays, self.density_change_arrays, self.density_adv_arrays]:
             for arr in arrs:
                 if arr.grad:
                     arr.grad.zero_()
 
         self.density_error_accum.zero_()
+        # self.print_all_rigid_grads()
+        # def print_dfsph_factor_max_grad_t0(self):
+        #     grads = self.dfsph_factor_arrays[0].grad.numpy()
+        #     max_grad = np.max(grads)
+        #     idx = np.argmax(grads)
+        #     print(f"t=0 dfsph_factor max grad: {max_grad} at index {idx}")
+        # print_dfsph_factor_max_grad_t0(self)
 
     def compute_density_change(self, x_state, v_state, density_change_out):
         wp.launch(
@@ -67,8 +74,8 @@ class SimDFSPH_diff(SimSPH_diff):
         x_out = self.x_arrays[t+1]
 
         # Preallocated per-step buffers
-        density_change_buf = self.density_change_buf_arrays[t]
-        density_adv_buf = self.density_adv_buf_arrays[t]
+        density_change_buf = self.density_change_arrays[t]
+        density_adv_buf = self.density_adv_arrays[t]
         
         # Intermediate/Aux buffers for this step
         # rho_out: density at current config x_in
@@ -78,7 +85,7 @@ class SimDFSPH_diff(SimSPH_diff):
         a_non_p = self.a_arrays[t+1]
         
         # viscous_force: For visualization/debugging
-        viscous_force = self.viscous_forces_arrays[t+1]
+        # viscous_force = self.viscous_forces_arrays[t+1]
         
         # dfsph_factor for this step
         dfsph_fac = self.dfsph_factor_arrays[t]
@@ -114,20 +121,20 @@ class SimDFSPH_diff(SimSPH_diff):
                 rho_out
             ]
         )
-        with current_tape:        
-            # 2. Compute DFSPH Factor
-            wp.launch(
-                kernel=compute_dfsph_factor_kernel,
-                dim=self.particle_max_num,
-                inputs=[
-                    self.grid.id,
-                    x_in,
-                    self.materialMarks,
-                    self.m_V,
-                    self.smoothing_length,
-                    dfsph_fac
-                ]
-            )
+        # with current_tape:        
+        # 2. Compute DFSPH Factor
+        wp.launch(
+            kernel=compute_dfsph_factor_kernel,
+            dim=self.particle_max_num,
+            inputs=[
+                self.grid.id,
+                x_in,
+                self.materialMarks,
+                self.m_V,
+                self.smoothing_length,
+                dfsph_fac
+            ]
+        )
 
         if self.enable_divergence_solver:
             with current_tape:

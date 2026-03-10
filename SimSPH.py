@@ -30,8 +30,8 @@ class SimSPH:
                     self.materialMarks],
         )
         # 打印m_V
-        m_V_np = self.m_V.numpy()
-        print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
+        # m_V_np = self.m_V.numpy()
+        # print(f"Computed boundary volumes, sample m_V: {m_V_np[:10]}")
 
 
     def __init__(self, config = None, container = None, method=0, stage_path="example_sph.usd", ply_path=None, h_scale=1.0):

@@ -4,6 +4,7 @@ from SimSPH import SimSPH
 from dfsph_kernel import compute_density_error_kernel, compute_dfsph_factor_kernel, compute_density_adv_kernel, compute_density_change_kernel, divergence_solve_iteration_kernel, pressure_solve_iteration_kernel
 from sph_kernel import compute_non_presure_forces, kick, drift
 from sph_kernel_diff import compute_density
+from sim_utils import export_ply_points
 
 class SimDFSPH(SimSPH):
     def __init__(self, config=None, container=None, method=0, stage_path="example_sph.usd", ply_path=None):
@@ -13,28 +14,21 @@ class SimDFSPH(SimSPH):
         self.m_max_iterations = 100
         self.max_error_V = 0.1
         self.m_max_iterations_v = 100
-        self.enable_divergence_solver = True
-        
-        self.dfsph_factor = None
-        self.density_adv = None
-        
+        self.enable_divergence_solver = False
+        self.enable_pressure_solver = True
+        self.init_DFSPH()
         # Error reduction buffer
         self.density_error_accum = wp.zeros(1, dtype=float)
-        
         # Temporary storage for non-pressure forces if needed, or reuse self.a
         self.viscous_force_temp = None
 
     def init_DFSPH(self):
-        if self.dfsph_factor is None:
-            self.dfsph_factor = wp.zeros(self.particle_max_num, dtype=float)
-            self.density_adv = wp.zeros(self.particle_max_num, dtype=float)
-            self.viscous_force_temp = wp.zeros(self.particle_max_num, dtype=wp.vec3)
+        self.dfsph_factor = wp.zeros(self.particle_max_num, dtype=float)
+        self.density_adv = wp.zeros(self.particle_max_num, dtype=float)
+        self.density_change = wp.zeros(self.particle_max_num, dtype=float)
+        self.viscous_force_temp = wp.zeros(self.particle_max_num, dtype=wp.vec3)
 
     def sub_step(self):
-        self.init_DFSPH()
-        # Hash grid update (done in SimSPH usually? No, SimSPH step does it.)
-        # SimSPH.step calls self.grid.build(self.x, self.smoothing_length)
-        # So we should do it here or call super().step/substep?
         # SimSPH.step structure:
         # 1. build grid
         # 2. handle rigid bodies
@@ -122,8 +116,9 @@ class SimDFSPH(SimSPH):
             ]
         )
         
+        if self.enable_pressure_solver:
         # 6. Pressure Solve
-        self.pressure_solve()
+            self.pressure_solve()
         
         # 7. Advect
         # x += v * dt
@@ -193,7 +188,7 @@ class SimDFSPH(SimSPH):
             wp.launch(
                 kernel=compute_density_error_kernel,
                 dim=self.particle_max_num,
-                inputs=[self.density_adv, self.materialMarks, self.base_density, 0.0, self.density_error_accum]
+                inputs=[self.density_change, self.materialMarks, self.base_density, 0.0, self.density_error_accum]
             )
 
             total_err = self.density_error_accum.numpy()[0]
@@ -224,7 +219,7 @@ class SimDFSPH(SimSPH):
                 self.m_V,
                 self.smoothing_length,
                 int(self.dim),
-                self.density_adv
+                self.density_change
             ]
         )
 
@@ -237,7 +232,7 @@ class SimDFSPH(SimSPH):
                 self.x,
                 self.v,
                 self.rho,
-                self.density_adv,
+                self.density_change,
                 self.dfsph_factor,
                 self.materialMarks,
                 self.m_V,
@@ -252,6 +247,46 @@ class SimDFSPH(SimSPH):
                 self.rbs.rigid_torque,
             ]
         )
+
+    def export_ply(self, series_prefix, cnt_ply):
+        np_pos = self.x.numpy()
+        np_rho = self.rho.numpy()
+        np_mV = self.m_V.numpy()
+        np_obj_id = self.object_id.numpy()
+        pf = self.pressure_forces.numpy()
+        vf = self.viscous_forces.numpy()
+        np_a = self.a.numpy()
+        np_v = self.v.numpy()
+
+        np_dfsph_factor = self.dfsph_factor.numpy().astype(np.float32)
+        np_density_adv = self.density_adv.numpy().astype(np.float32)
+        np_density_change = self.density_change.numpy().astype(np.float32)
+
+        out_path = series_prefix.format(cnt_ply)
+        export_ply_points(out_path, np_pos.astype(np.float32), {
+            'rho': np_rho.astype(np.float32),
+            'pressure': self.pressure.numpy().astype(np.float32),
+            'mV': np_mV.astype(np.float32),
+            'object_id': np_obj_id.astype(np.int32),
+            'neighbor_num': self.neibor_nums.numpy().astype(np.int32),
+            'pressure_fx': pf[:,0].astype(np.float32),
+            'pressure_fy': pf[:,1].astype(np.float32),
+            'pressure_fz': pf[:,2].astype(np.float32),
+            'viscous_fx': vf[:,0].astype(np.float32),
+            'viscous_fy': vf[:,1].astype(np.float32),
+            'viscous_fz': vf[:,2].astype(np.float32),
+            'ax': np_a[:,0].astype(np.float32),
+            'ay': np_a[:,1].astype(np.float32),
+            'az': np_a[:,2].astype(np.float32),
+            'vx': np_v[:,0].astype(np.float32),
+            'vy': np_v[:,1].astype(np.float32),
+            'vz': np_v[:,2].astype(np.float32),
+            'material': self.materialMarks.material.numpy().astype(np.int32),
+            'is_dynamic': self.materialMarks.is_dynamic.numpy().astype(np.int32),
+            'dfsph_factor': np_dfsph_factor,
+            'density_adv': np_density_adv,
+            'density_change': np_density_change,
+        })
             
         # print(f"DFSPH - iterations: {m_iterations} Avg density Err: {avg_err:.4f}")
 

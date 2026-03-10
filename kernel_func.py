@@ -146,7 +146,7 @@ def cubic_kernel_derivative(r: wp.vec3, support_radius: float):
             res = k * q * (3.0 * q - 2.0) * grad_q
         else:
             factor = 1.0 - q
-            res = k * (-factor * factor) * grad_q
+            res = k * (-factor * factor) * grad_q # TODO: remove the sign for derivative to x_i 
     return res
 
 
