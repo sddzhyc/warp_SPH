@@ -190,7 +190,7 @@ def get_acceleration(
         # loop through neighbors to compute acceleration
         for index in neighbors:
             dis = wp.length(x - particle_x[index])
-            debug_val[i] = max(debug_val[i], wp.float32(dis / smoothing_length))
+            # debug_val[i] = max(debug_val[i], wp.float32(dis / smoothing_length))
             if index != i and dis  < smoothing_length:
                 # get neighbor velocity
                 # neighbor_v = particle_v[index]
@@ -299,7 +299,7 @@ def compute_rigid_force_torque(
                     #     relative_position, pressure, pressure, rho, base_density, smoothing_length
                     # )
                     d = wp.length(relative_position)
-                    debug_val[i] = max(debug_val[i], wp.float32(d / smoothing_length))                    
+                    debug_val[i] = wp.min(debug_val[i], wp.float32(d / smoothing_length))                    
                     if d < smoothing_length * (1.0):
                         debug_val[i] = wp.float32(d / smoothing_length)
                         # wp.printf("debug_val: %f, neighbor_index: %d, distance: %f\n", debug_val[i], index, d)
@@ -429,6 +429,21 @@ def simulate_collisions_warp(particle_v: wp.array(dtype=wp.vec3), idx: int, n: w
     particle_v[idx] = v - (1.0 + c_f) * wp.dot(v, n) * n
 
 
+@wp.func
+def simulate_collisions_warp_with_wall_velocity(
+    particle_v: wp.array(dtype=wp.vec3),
+    idx: int,
+    n: wp.vec3,
+    wall_v: wp.vec3,
+):
+    # Collision in wall-relative frame, then transform back.
+    c_f = 0.5
+    v = particle_v[idx]
+    v_rel = v - wall_v
+    v_rel_after = v_rel - (1.0 + c_f) * wp.dot(v_rel, n) * n
+    particle_v[idx] = v_rel_after + wall_v
+
+
 @wp.kernel
 def enforce_boundary_3D_warp(
     particle_x: wp.array(dtype=wp.vec3),
@@ -437,6 +452,7 @@ def enforce_boundary_3D_warp(
     lower_bound: wp.vec3,
     upper_bound: wp.vec3,
     padding: float,
+    lower_x_wall_velocity: float,
 ):
     tid = wp.tid()
 
@@ -451,9 +467,11 @@ def enforce_boundary_3D_warp(
     if pos[0] > upper_bound[0] - padding:
         collision_normal = collision_normal + wp.vec3(-1.0, 0.0, 0.0)
         pos = wp.vec3(upper_bound[0] - padding, pos[1], pos[2])
+    hit_lower_x = 0
     if pos[0] < lower_bound[0] + padding:
         collision_normal = collision_normal + wp.vec3(1.0, 0.0, 0.0)
         pos = wp.vec3(lower_bound[0] + padding, pos[1], pos[2])
+        hit_lower_x = 1
 
     # y axis
     if pos[1] > upper_bound[1] - padding:
@@ -478,4 +496,12 @@ def enforce_boundary_3D_warp(
     cn_len = wp.length(collision_normal)
     if cn_len > 1e-6:
         n = collision_normal / cn_len
-        simulate_collisions_warp(particle_v, tid, n)
+        if hit_lower_x == 1:
+            simulate_collisions_warp_with_wall_velocity(
+                particle_v,
+                tid,
+                n,
+                wp.vec3(lower_x_wall_velocity, 0.0, 0.0),
+            )
+        else:
+            simulate_collisions_warp(particle_v, tid, n)

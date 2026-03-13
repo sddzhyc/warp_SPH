@@ -394,6 +394,7 @@ def pressure_solve_iteration_kernel_solid(
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
     rigid_x: wp.array(dtype=wp.vec3),
+    debug_val: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     i = wp.hash_grid_point_id(grid, tid)
@@ -418,6 +419,7 @@ def pressure_solve_iteration_kernel_solid(
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
         if d < smoothing_length and mtr.material[index] == MaterialType.SOLID:
+            debug_val[i] = wp.min(debug_val[i], wp.float32(d / smoothing_length))
             if wp.abs(k_i) > m_eps:
                 if use_custom_grad:
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
@@ -504,6 +506,7 @@ def divergence_solve_iteration_kernel_solid(
     particle_v_out: wp.array(dtype=wp.vec3),
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
+    debug_val: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()
     i = wp.hash_grid_point_id(grid, tid)
@@ -527,6 +530,7 @@ def divergence_solve_iteration_kernel_solid(
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
         if d < smoothing_length and mtr.material[index] == MaterialType.SOLID:
+            debug_val[i] = wp.min(debug_val[i], wp.float32(d / smoothing_length))
             if wp.abs(k_i) > m_eps:
                 if use_custom_grad:
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)

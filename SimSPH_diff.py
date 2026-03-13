@@ -247,63 +247,52 @@ class SimSPH_diff(SimSPH):
         self.tapes = []
         self.loss_tape = None
 
-        t_forward_start = time.perf_counter()
-
         # Fast path: when gradient normalization is disabled,
         # use a single tape for full forward recording and one-shot backward.
         if not self.use_norm_grad:
             self.backward_single_tape()
             return
         
-        for t in range(self.sim_steps):
-            # advance state from t -> t+1
-            current_tape = wp.Tape()
-            self.tapes.append(current_tape)
-            # Set optimized initial rigid velocities if applicable
-            if t == 0:
-                self.task.init_simulation_state()
-            self.step(t)
-            # print(f"Completed forward step {t+1}/{self.sim_steps}")
-        
-        # Loss
-        self.loss_tape = wp.Tape()
-        with self.loss_tape:
-            self.task.compute_loss()
+        with wp.ScopedTimer("Forward Simulation"):
+            for t in range(self.sim_steps):
+                # advance state from t -> t+1
+                current_tape = wp.Tape()
+                self.tapes.append(current_tape)
+                # Set optimized initial rigid velocities if applicable
+                if t == 0:
+                    self.task.init_simulation_state()
+                self.step(t)
+                # print(f"Completed forward step {t+1}/{self.sim_steps}")
+            
+            # Loss
+            self.loss_tape = wp.Tape()
+            with self.loss_tape:
+                self.task.compute_loss()
 
         # wp.synchronize()  # 强制等待 GPU 完成并刷新输出
-        t_forward_end = time.perf_counter()
-        print(f"Forward simulation time: {t_forward_end - t_forward_start:.4f}s")
         print(f"Completed differentiable forward pass {self.sim_steps} steps, Starting backward pass...")
-        t_backward_start = time.perf_counter()
         
-        # Backward Loop
-        self.loss_tape.backward(self.loss)
-        
-        # We iterate backwards from end to start
-        for t in reversed(range(self.sim_steps)):
-            # Normalize gradients at t+1 (x_arrays[t+1], v_arrays[t+1])
+        with wp.ScopedTimer("Backward Propagation"):
+            # Backward Loop
+            self.loss_tape.backward(self.loss)
+            
+            # We iterate backwards from end to start
+            for t in reversed(range(self.sim_steps)):
+                # Normalize gradients at t+1 (x_arrays[t+1], v_arrays[t+1])
+                if self.use_norm_grad:
+                    self.normalize_single_state_grad(self.x_arrays[t+1])
+                    self.normalize_single_state_grad(self.v_arrays[t+1])
+                
+                # 2. Propagate through step t (t -> t+1) to get grads at t
+                self.tapes[t].backward()
+                
+                # (Loop continues to t-1, where we will normalize grads at t, which we just computed)
+            
+            # Finally, normalize grads at t=0
             if self.use_norm_grad:
-                self.normalize_single_state_grad(self.x_arrays[t+1])
-                self.normalize_single_state_grad(self.v_arrays[t+1])
-            
-            # 2. Propagate through step t (t -> t+1) to get grads at t
-            self.tapes[t].backward()
-            
-            # (Loop continues to t-1, where we will normalize grads at t, which we just computed)
-        
-        # Finally, normalize grads at t=0
-        if self.use_norm_grad:
-            self.normalize_single_state_grad(self.x_arrays[0])
-            self.normalize_single_state_grad(self.v_arrays[0])
+                self.normalize_single_state_grad(self.x_arrays[0])
+                self.normalize_single_state_grad(self.v_arrays[0])
 
-        #wp.synchronize()
-        t_backward_end = time.perf_counter()
-        print(f"Backward propagation time: {t_backward_end - t_backward_start:.4f}s")
-        print(f"Total backward() time: {t_backward_end - t_forward_start:.4f}s")
-
-        # Backward through initialization
-        # init_tape.backward()  # Removed as initialization is now handled in step(0)
-        
         # Result logic...
         # self.tape.visualize("sph_graph.dot") # Cannot visualize split tapes easily as one graph
 
@@ -338,6 +327,20 @@ class SimSPH_diff(SimSPH):
             with wp.ScopedTimer("grid build", active=self.verbose):
                 # build grid
                 self.grid.build(x_in, self.grid_size)
+
+            lower_bound = np.array(self.domain_start, dtype=np.float32)
+            upper_bound = np.array(self.domain_end, dtype=np.float32)
+            lower_x_wall_velocity = 0.0
+            if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
+                omega = 2.0 * np.pi * self.wave_boundary_frequency
+                shift = 0.5 * self.wave_boundary_amplitude * (
+                    1.0 + np.sin(omega * self.sim_time + self.wave_boundary_phase)
+                )
+                shift = min(shift, 0.2 * float(self.domain_end[0] - self.domain_start[0]))
+                lower_bound[0] = float(self.domain_start[0] + shift)
+                lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.cos(
+                    omega * self.sim_time + self.wave_boundary_phase
+                )
             
             # Substep (Physics Solver)
             self.sub_step(t)
@@ -354,9 +357,10 @@ class SimSPH_diff(SimSPH):
                     x_out,
                     v_out,
                     self.materialMarks,
-                    wp.vec3(*self.domain_start),
-                    wp.vec3(*self.domain_end),
+                    wp.vec3(*lower_bound),
+                    wp.vec3(*upper_bound),
                     self.padding,
+                    float(lower_x_wall_velocity),
                 ]
             )
             

@@ -68,6 +68,15 @@ class SimSPH:
             else:
                 self.domian_end = np.array(d_end)
                 self.domain_end = np.array(d_end)
+
+            # Direct boundary wavemaker parameters (left x-boundary).
+            self.wave_boundary_enable = bool(config.get_cfg("waveBoundaryEnable") or False)
+            amp_cfg = config.get_cfg("waveBoundaryAmplitude")
+            freq_cfg = config.get_cfg("waveBoundaryFrequency")
+            phase_cfg = config.get_cfg("waveBoundaryPhase")
+            self.wave_boundary_amplitude = float(amp_cfg) if amp_cfg is not None else 0.0
+            self.wave_boundary_frequency = float(freq_cfg) if freq_cfg is not None else 0.0
+            self.wave_boundary_phase = float(phase_cfg) if phase_cfg is not None else 0.0
                 
             ds = (self.domian_end - self.domain_start).astype(np.float32)
             self.domain_size = wp.vec3(ds[0], ds[1], ds[2])
@@ -114,6 +123,11 @@ class SimSPH:
             # All objects id and its particle num
             self.object_collection = dict()
             self.object_id_rigid_body = set()
+        else:
+            self.wave_boundary_enable = False
+            self.wave_boundary_amplitude = 0.0
+            self.wave_boundary_frequency = 0.0
+            self.wave_boundary_phase = 0.0
 
         self.time_step = 0.0
         # recompute constants
@@ -1281,10 +1295,31 @@ class SimSPH:
         # drift
         wp.launch(kernel=drift_diff, dim=self.particle_max_num, inputs=[self.x, self.v, self.dt, self.x])
 
+    def _get_wave_boundary_state(self):
+        lower_bound = np.array(self.domain_start, dtype=np.float32)
+        upper_bound = np.array(self.domain_end, dtype=np.float32)
+        lower_x_wall_velocity = 0.0
+
+        if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
+            omega = 2.0 * np.pi * self.wave_boundary_frequency
+            # Shift in [0, A], so boundary never moves outside the original domain.
+            shift = 0.5 * self.wave_boundary_amplitude * (
+                1.0 + np.sin(omega * self.sim_time + self.wave_boundary_phase)
+            )
+            shift = min(shift, 0.2 * float(self.domain_end[0] - self.domain_start[0]))
+            lower_bound[0] = float(self.domain_start[0] + shift)
+            lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.cos(
+                omega * self.sim_time + self.wave_boundary_phase
+            )
+
+        return lower_bound, upper_bound, float(lower_x_wall_velocity)
+
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step", active=self.verbose):
             for _ in range(self.sim_step_to_frame_ratio):
+                lower_bound, upper_bound, lower_x_wall_velocity = self._get_wave_boundary_state()
+
                 with wp.ScopedTimer("grid build", active=self.verbose):
                     # build grid
                     #self.grid.build(self.x, self.smoothing_length)
@@ -1303,9 +1338,10 @@ class SimSPH:
                         dim=self.particle_max_num,
                         inputs=[self.x, self.v,
                                 self.materialMarks,
-                                wp.vec3(*self.domain_start),
-                                wp.vec3(*self.domain_end),
+                                wp.vec3(*lower_bound),
+                                wp.vec3(*upper_bound),
                                 self.padding,
+                                lower_x_wall_velocity,
                         ]
                     )
 

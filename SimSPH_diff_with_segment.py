@@ -2,6 +2,7 @@ from SimSPH import SimSPH
 from particle_system import ParticleSystem
 from rigid_fluid_coupling import MaterialMarks, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info
 from sph_kernel import *
+from sph_kernel_diff import compute_density, enforce_boundary_3D_warp
 
 import numpy as np
 import warp as wp
@@ -347,7 +348,8 @@ class SimSPH_diff_with_segment(SimSPH):
                 wp.copy(self.rigid_quaternion_arrays[t], self.rigid_quaternion_arrays[t-1])
                 
                 # Update rbs to point to current arrays
-                self.rbs.rigid_x = self.rigid_x_arrays[t]
+                wp.vec3(*self.domain_start),
+                wp.vec3(*self.domain_end),
                 self.rbs.rigid_v = self.rigid_v_arrays[t]
                 self.rbs.rigid_omega = self.rigid_omega_arrays[t]
                 self.rbs.rigid_quaternion = self.rigid_quaternion_arrays[t]
@@ -392,10 +394,11 @@ class SimSPH_diff_with_segment(SimSPH):
                     wp.launch(
                         kernel=compute_density,
                         dim=self.particle_max_num,
-                        inputs=[self.grid.id, current_x, current_rho, 
+                        inputs=[self.grid.id, current_x,
                                 1.0, # cubic kernel don't need normalization
                                 self.smoothing_length,
-                                self.materialMarks, self.m_V, self.base_density],
+                            self.materialMarks, self.m_V, self.base_density,
+                            current_rho],
                     )
 
                     wp.launch(
@@ -420,7 +423,10 @@ class SimSPH_diff_with_segment(SimSPH):
                             self.base_density,
                             self.viscous_forces,
                             self.object_id,
-                            self.rbs
+                            self.rbs,
+                            self.surface_tension,
+                            self.gravity,
+                            current_a,
                         ],
                     )
 
@@ -459,8 +465,10 @@ class SimSPH_diff_with_segment(SimSPH):
                         dim=self.particle_max_num,
                         inputs=[current_x, current_v,
                                 self.materialMarks,
-                                self.domain_size,
+                                wp.vec3(*self.domain_start),
+                                wp.vec3(*self.domain_end),
                                 self.padding,
+                                0.0,
                         ]
                     )
 
