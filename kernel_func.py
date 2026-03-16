@@ -221,16 +221,18 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
         adj_r_norm = -adj_inv_r_norm * inv_r_norm * inv_r_norm
 
         adj_q = 0.0
-        if q <= 0.5:
-            adj_q += adj_coeff * k * (6.0 * q - 2.0)
-        else:
-            factor = 1.0 - q
-            adj_q += adj_coeff * (2.0 * k * factor)
+        # if q <= 0.5:
+        #     adj_q += -adj_coeff * k * (6.0 * q - 2.0) # r < 0.5h: 添加负号:保证核函数二阶导不为负
+        # else:
+        #     factor = 1.0 - q
+        #     adj_q += adj_coeff * (2.0 * k * factor)
+        factor = 1.0 - q
+        adj_q += adj_coeff * (2.0 * k * factor)
 
         adj_r_norm += adj_q * inv_h
         adj_r += adj_r_norm * (r * inv_r_norm)
 
-    wp.adjoint[r] += adj_r * 0.1
+    wp.adjoint[r] += adj_r * 0.1 # Add scale param 
 
 
 # @wp.func_replay(cubic_kernel_derivative)
