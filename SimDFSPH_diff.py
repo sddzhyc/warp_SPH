@@ -9,33 +9,41 @@ from rigid_fluid_coupling import compute_moving_boundary_volume, solve_rigid_bod
 class SimDFSPH_diff(SimSPH_diff):
     def __init__(self, config=None, container=None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, verbose=False):
         super().__init__(config, container, stage_path, sim_steps, ply_path, lr, h_scale, use_custom_grad, use_norm_grad, verbose)
-        self.m_max_iterations = 1  # Reduced iterations for differentiability
+        self.m_max_iterations = 5  # Reduced iterations for differentiability
         self.max_error = 0.05
         self.max_error_V = 0.1
-        self.m_max_iterations_v = 1
+        self.m_max_iterations_v = 5
         self.enable_divergence_solver = True
-        self.enable_pressure_solver = False  # Disable for initial testing of differentiability
+        self.enable_pressure_solver = True  # Disable for initial testing of differentiability
         
     def init_diff_phys(self, sim_steps):
         super().init_diff_phys(sim_steps)
         self.density_error_accum = wp.zeros(1, dtype=float)
 
         self.dfsph_factor_arrays = []
-        self.density_change_arrays = []
-        self.density_adv_arrays = []
+        self.density_change_arrays = [[] for _ in range(self.sim_steps + 1)]
+        self.density_adv_arrays = [[] for _ in range(self.sim_steps + 1)]
 
         for _ in range(self.sim_steps + 1):
-            self.dfsph_factor_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
-            self.density_change_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
-            self.density_adv_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=True))
+            self.dfsph_factor_arrays.append(wp.zeros(self.particle_max_num, dtype=float, requires_grad=False))
+
+    def _append_iter_buffer(self, buffer_2d, t):
+        buf = wp.zeros(self.particle_max_num, dtype=float, requires_grad=True)
+        buffer_2d[t].append(buf)
+        return buf
 
     def clear_grad(self):
         super().clear_grad()
 
-        for arrs in [self.dfsph_factor_arrays, self.density_change_arrays, self.density_adv_arrays]:
-            for arr in arrs:
-                if arr.grad:
-                    arr.grad.zero_()
+        for arr in self.dfsph_factor_arrays:
+            if arr.grad:
+                arr.grad.zero_()
+
+        for arrs_t in [self.density_change_arrays, self.density_adv_arrays]:
+            for arrs in arrs_t:
+                for arr in arrs:
+                    if arr.grad:
+                        arr.grad.zero_()
 
         self.density_error_accum.zero_()
         # self.print_all_rigid_grads()
@@ -46,53 +54,34 @@ class SimDFSPH_diff(SimSPH_diff):
         #     print(f"t=0 dfsph_factor max grad: {max_grad} at index {idx}")
         # print_dfsph_factor_max_grad_t0(self)
 
-    def compute_density_change(self, x_state, v_state, density_change_out):
-        wp.launch(
-            kernel=compute_density_change_kernel,
-            dim=self.particle_max_num,
-            inputs=[
-                self.grid.id,
-                x_state,
-                v_state,
-                self.materialMarks,
-                self.m_V,
-                self.smoothing_length,
-                int(self.dim),
-                density_change_out,
-            ],
-        )
+    def _reset_iter_buffers_at_t(self, t):
+        self.density_change_arrays[t] = []
+        self.density_adv_arrays[t] = []
 
     def sub_step(self, t):
         current_tape = self.tapes[-1]
-        
+
+        self._reset_iter_buffers_at_t(t)
+
         # Input state at t
         x_in = self.x_arrays[t]
         v_in = self.v_arrays[t]
-        
         # Output state at t+1 (will be written to)
         v_out = self.v_arrays[t+1]
         x_out = self.x_arrays[t+1]
-
-        # Preallocated per-step buffers
-        density_change_buf = self.density_change_arrays[t]
-        density_adv_buf = self.density_adv_arrays[t]
-        
         # Intermediate/Aux buffers for this step
         # rho_out: density at current config x_in
         rho_out = self.rho_arrays[t+1]
-        
         # a_non_p: Non-pressure acceleration. Used for prediction.
         a_non_p = self.a_arrays[t+1]
-        
         # viscous_force: For visualization/debugging
         # viscous_force = self.viscous_forces_arrays[t+1]
-        
         # dfsph_factor for this step
         dfsph_fac = self.dfsph_factor_arrays[t]
 
         eta_div = (1.0 / float(self.frame_dt)) * self.max_error_V * 0.01 * self.base_density
         eta_press = self.max_error * 0.01 * self.base_density
-        
+
         # Note: rbs pointers and grid build are handled in SimSPH_diff.step
 
         # Start Tape for Differentiable execution
@@ -121,7 +110,7 @@ class SimDFSPH_diff(SimSPH_diff):
                 rho_out
             ]
         )
-        # with current_tape:        
+        # with current_tape:
         # 2. Compute DFSPH Factor
         wp.launch(
             kernel=compute_dfsph_factor_kernel,
@@ -138,25 +127,41 @@ class SimDFSPH_diff(SimSPH_diff):
 
         if self.enable_divergence_solver:
             with current_tape:
-                self.compute_density_change(x_in, v_in, density_change_buf)
-            for m_iterations_v in range(self.m_max_iterations_v):
+                density_change_buf = self._append_iter_buffer(self.density_change_arrays, t)
                 wp.launch(
-                    kernel=divergence_solve_iteration_kernel_fluid,
+                    kernel=compute_density_change_kernel,
                     dim=self.particle_max_num,
                     inputs=[
                         self.grid.id,
                         x_in,
-                        density_change_buf,
-                        dfsph_fac,
+                        v_in,
                         self.materialMarks,
                         self.m_V,
                         self.smoothing_length,
-                        self.frame_dt,
-                        self.use_custom_grad,
-                        v_in,
+                        int(self.dim),
+                    ],
+                    outputs=[
+                        density_change_buf,
                     ],
                 )
-                with current_tape:
+                for m_iterations_v in range(self.m_max_iterations_v):
+                    wp.launch(
+                        kernel=divergence_solve_iteration_kernel_fluid,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            x_in,
+                            density_change_buf,
+                            dfsph_fac,
+                            self.materialMarks,
+                            self.m_V,
+                            self.smoothing_length,
+                            self.frame_dt,
+                            self.use_custom_grad,
+                            v_in,
+                        ],
+                    )
+
                     wp.launch(
                         kernel=divergence_solve_iteration_kernel_solid,
                         dim=self.particle_max_num,
@@ -174,20 +179,40 @@ class SimDFSPH_diff(SimSPH_diff):
                             self.rbs.rigid_x,
                             self.use_custom_grad,
                         ],
-                        outputs=[v_in, self.rbs.rigid_force, self.rbs.rigid_torque]
+                        outputs=[v_in, self.rbs.rigid_force, self.rbs.rigid_torque, self.debug_val_arrays[t]]
                     )
-                self.compute_density_change(x_in, v_in, density_change_buf)
+                    density_change_buf = self._append_iter_buffer(self.density_change_arrays, t)
+                    wp.launch(
+                        kernel=compute_density_change_kernel,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            x_in,
+                            v_in,
+                            self.materialMarks,
+                            self.m_V,
+                            self.smoothing_length,
+                            int(self.dim),
+                        ],
+                        outputs=[
+                            density_change_buf,
+                        ],
+                    )
 
-                self.density_error_accum.zero_()
-                wp.launch(
-                    kernel=compute_density_error_kernel,
-                    dim=self.particle_max_num,
-                    inputs=[density_change_buf, self.materialMarks, self.base_density, 0.0, self.density_error_accum]
-                )
-                avg_err_div = self.density_error_accum.numpy()[0] / max(1, self.fluid_particle_num)
-                if avg_err_div <= eta_div:
-                    break
-                print(f"DFSPH - iteration V: {m_iterations_v} Avg density err: {avg_err_div}")
+                    self.density_error_accum.zero_()
+                    wp.launch(
+                        kernel=compute_density_error_kernel,
+                        dim=self.particle_max_num,
+                        inputs=[density_change_buf, self.materialMarks, self.base_density, 0.0, self.density_error_accum]
+                    )
+                    avg_err_div = self.density_error_accum.numpy()[0] / max(1, self.fluid_particle_num)
+                    if avg_err_div <= eta_div:
+                        break
+                    if m_iterations_v == self.m_max_iterations_v - 1 and avg_err_div > eta_div:
+                        print(
+                            f"[DFSPH warning] divergence_solve reached m_max_iterations_v={self.m_max_iterations_v} "
+                            f"with avg_err_div={avg_err_div:.4f} (eta_div={eta_div:.4f})"
+                        )
 
         # 3. Compute Non-Pressure Forces (Viscosity, Gravity)
         wp.launch(
@@ -220,14 +245,16 @@ class SimDFSPH_diff(SimSPH_diff):
                     a_non_p,
                     self.frame_dt,
                     v_in,
+                ],
+                outputs=[
                     v_out
                 ]
             )
-        
+
         if self.enable_pressure_solver:
-            # 5. Pressure Solve Loop (Iterative Velocity Correction, ping-pong)
-            # v_press_curr = v_out
             with current_tape:
+            # 5. Pressure Solve Loop (Iterative Velocity Correction, ping-pong)
+                density_adv_buf = self._append_iter_buffer(self.density_adv_arrays, t)
                 wp.launch(
                     kernel=compute_density_adv_kernel,
                     dim=self.particle_max_num,
@@ -241,29 +268,29 @@ class SimDFSPH_diff(SimSPH_diff):
                         self.smoothing_length,
                         self.frame_dt,
                         self.base_density,
+                    ],
+                    outputs=[
                         density_adv_buf
                     ]
                 )
-
-            for _ in range(self.m_max_iterations):
-                wp.launch(
-                    kernel=pressure_solve_iteration_kernel_fluid,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        x_in,
-                        v_out,
-                        density_adv_buf,
-                        dfsph_fac,
-                        self.materialMarks,
-                        self.m_V,
-                        self.smoothing_length,
-                        self.frame_dt,
-                        self.use_custom_grad,
-                        v_out,
-                    ]
-                )
-                with current_tape:
+                for m_iterations in range(self.m_max_iterations):
+                    wp.launch(
+                        kernel=pressure_solve_iteration_kernel_fluid,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            x_in,
+                            v_out,
+                            density_adv_buf,
+                            dfsph_fac,
+                            self.materialMarks,
+                            self.m_V,
+                            self.smoothing_length,
+                            self.frame_dt,
+                            self.use_custom_grad,
+                            v_out,
+                        ]
+                    )
                     wp.launch(
                         kernel=pressure_solve_iteration_kernel_solid,
                         dim=self.particle_max_num,
@@ -278,39 +305,50 @@ class SimDFSPH_diff(SimSPH_diff):
                             self.frame_dt,
                             self.base_density,
                             self.use_custom_grad,
-                            v_out,
                             self.object_id,
+                            self.rbs.rigid_x,
+                        ],
+                        outputs=[
+                            v_out,
                             self.rbs.rigid_force,
                             self.rbs.rigid_torque,
-                            self.rbs.rigid_x,
+                            self.debug_val_arrays[t],
                         ]
                     )
-                wp.launch(
-                    kernel=compute_density_adv_kernel,
-                    dim=self.particle_max_num,
-                    inputs=[
-                        self.grid.id,
-                        x_in,
-                        v_out,
-                        rho_out,
-                        self.materialMarks,
-                        self.m_V,
-                        self.smoothing_length,
-                        self.frame_dt,
-                        self.base_density,
-                        density_adv_buf
-                    ]
-                )
+                    density_adv_buf = self._append_iter_buffer(self.density_adv_arrays, t)
+                    wp.launch(
+                        kernel=compute_density_adv_kernel,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            x_in,
+                            v_out,
+                            rho_out,
+                            self.materialMarks,
+                            self.m_V,
+                            self.smoothing_length,
+                            self.frame_dt,
+                            self.base_density,
+                        ],
+                        outputs=[
+                            density_adv_buf
+                        ]
+                    )
 
-                self.density_error_accum.zero_()
-                wp.launch(
-                    kernel=compute_density_error_kernel,
-                    dim=self.particle_max_num,
-                    inputs=[density_adv_buf, self.materialMarks, self.base_density, self.base_density, self.density_error_accum]
-                )
-                avg_err_press = self.density_error_accum.numpy()[0] / max(1, self.fluid_particle_num)
-                if avg_err_press <= eta_press:
-                    break
+                    self.density_error_accum.zero_()
+                    wp.launch(
+                        kernel=compute_density_error_kernel,
+                        dim=self.particle_max_num,
+                        inputs=[density_adv_buf, self.materialMarks, self.base_density, self.base_density, self.density_error_accum]
+                    )
+                    avg_err_press = self.density_error_accum.numpy()[0] / max(1, self.fluid_particle_num)
+                    if avg_err_press <= eta_press:
+                        break
+                    if m_iterations == self.m_max_iterations - 1 and avg_err_press > eta_press:
+                        print(
+                            f"[DFSPH warning] pressure_solve reached m_max_iterations={self.m_max_iterations} "
+                            f"with avg_err_press={avg_err_press:.4f} (eta_press={eta_press:.4f})"
+                        )
 
         with current_tape:
             # 6. Advect
@@ -322,6 +360,8 @@ class SimDFSPH_diff(SimSPH_diff):
                     x_in,
                     v_out,
                     self.frame_dt,
+                ],
+                outputs=[
                     x_out
                 ]
             )

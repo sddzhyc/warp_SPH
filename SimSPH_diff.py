@@ -227,21 +227,11 @@ class SimSPH_diff(SimSPH):
         print(f"Completed differentiable forward pass {self.sim_steps} steps, Starting backward pass...")
         with wp.ScopedTimer("Backward Bropagation"):
             single_tape.backward(self.loss)
+                # Result logic...
+        # single_tape.visualize("sph_graph.dot") # Cannot visualize split tapes easily as one graph
+        # self.print_all_rigid_grads()
 
     def backward(self):
-        # If I want to split tapes, I should also follow this pattern or rely on forward() being called before backward().
-        # Standard PyTorch/Warp pattern: 
-        #   optimizer.zero_grad() -> clear_grad
-        #   loss = model.forward() -> builds graph
-        #   loss.backward() -> traverses graph
-        # Yes: `with self.tape: ... step(t) ...`
-        # This is inefficient if forward was already run.
-        # But maybe `forward` method was just for inference?
-        # The user's `backward` method:
-        #   self.clear_grad()
-        #   self.reset()
-        #   with self.tape: ... step(t) ...
-
         self.clear_grad()
         self.reset()
         self.tapes = []
@@ -249,10 +239,12 @@ class SimSPH_diff(SimSPH):
 
         # Fast path: when gradient normalization is disabled,
         # use a single tape for full forward recording and one-shot backward.
-        if not self.use_norm_grad:
+        if self.use_norm_grad:
+            self.backward_multi_tape()
+        else:
             self.backward_single_tape()
-            return
-        
+
+    def backward_multi_tape(self):
         with wp.ScopedTimer("Forward Simulation"):
             for t in range(self.sim_steps):
                 # advance state from t -> t+1
@@ -282,6 +274,13 @@ class SimSPH_diff(SimSPH):
                 if self.use_norm_grad:
                     self.normalize_single_state_grad(self.x_arrays[t+1])
                     self.normalize_single_state_grad(self.v_arrays[t+1])
+                    if self.num_objects > 0:
+                        for arr in [self.rigid_x_arrays[t+1], self.rigid_v_arrays[t+1], self.rigid_omega_arrays[t+1], self.rigid_quaternion_arrays[t+1]]:
+                            if arr.grad:
+                                grad_np = arr.grad.numpy()
+                                l2 = np.linalg.norm(grad_np)
+                                if l2 > 1e-10:
+                                    arr.grad.assign(grad_np / l2)
                 
                 # 2. Propagate through step t (t -> t+1) to get grads at t
                 self.tapes[t].backward()
@@ -292,9 +291,14 @@ class SimSPH_diff(SimSPH):
             if self.use_norm_grad:
                 self.normalize_single_state_grad(self.x_arrays[0])
                 self.normalize_single_state_grad(self.v_arrays[0])
+                if self.num_objects > 0:
+                    for arr in [self.rigid_x_arrays[0], self.rigid_v_arrays[0], self.rigid_omega_arrays[0], self.rigid_quaternion_arrays[0]]:
+                        if arr.grad:
+                            grad_np = arr.grad.numpy()
+                            l2 = np.linalg.norm(grad_np)
+                            if l2 > 1e-10:
+                                arr.grad.assign(grad_np / l2)
 
-        # Result logic...
-        # self.tape.visualize("sph_graph.dot") # Cannot visualize split tapes easily as one graph
 
     def norm_final_grad(self):
         if self.v_arrays[0].grad:
@@ -566,6 +570,22 @@ class SimSPH_diff(SimSPH):
         np_vel = np.linalg.norm(np_v, axis=1)
         debug_val = self.debug_val_arrays[time_step].numpy()
 
+        density_change = np.zeros(self.particle_max_num, dtype=np.float32)
+        if hasattr(self, "density_change_arrays") and time_step < len(self.density_change_arrays):
+            density_change_list = self.density_change_arrays[time_step]
+            if len(density_change_list) > 0:
+                density_change = density_change_list[-1].numpy()
+
+        density_adv = np.zeros(self.particle_max_num, dtype=np.float32)
+        if hasattr(self, "density_adv_arrays") and time_step < len(self.density_adv_arrays):
+            density_adv_list = self.density_adv_arrays[time_step]
+            if len(density_adv_list) > 0:
+                density_adv = density_adv_list[-1].numpy()
+
+        dfsph_factor = np.zeros(self.particle_max_num, dtype=np.float32)
+        if hasattr(self, "dfsph_factor_arrays") and time_step < len(self.dfsph_factor_arrays):
+            dfsph_factor = self.dfsph_factor_arrays[time_step].numpy()
+
         # Gradients
         grad_x = self.x_arrays[time_step].grad.numpy()
         grad_v = self.v_arrays[time_step].grad.numpy()
@@ -598,6 +618,11 @@ class SimSPH_diff(SimSPH):
             'vel': np_vel.astype(np.float32),
             'material': self.materialMarks.material.numpy().astype(np.int32),
             'is_dynamic': self.materialMarks.is_dynamic.numpy().astype(np.int32),
+
+            # DFSPH diagnostics (available in SimDFSPH_diff)
+            'density_change': density_change.astype(np.float32),
+            'density_adv': density_adv.astype(np.float32),
+            'dfsph_factor': dfsph_factor.astype(np.float32),
 
             # Gradients
             'grad_x_x': grad_x[:,0].astype(np.float32),

@@ -389,11 +389,11 @@ def pressure_solve_iteration_kernel_solid(
     dt: float,
     base_density: float,
     use_custom_grad: bool,
-    particle_v_out: wp.array(dtype=wp.vec3),
     object_id: wp.array(dtype=wp.int32),
+    rigid_x: wp.array(dtype=wp.vec3),
+    particle_v_out: wp.array(dtype=wp.vec3),
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
-    rigid_x: wp.array(dtype=wp.vec3),
     debug_val: wp.array(dtype=wp.float32),
 ):
     tid = wp.tid()

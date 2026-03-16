@@ -6,11 +6,11 @@ from .base_task import Task
 
 @wp.kernel
 def assign_rigid_init_state_kernel(
-    rigid_v: wp.array(dtype=wp.vec3),
-    rigid_omega: wp.array(dtype=wp.vec3),
     opt_rigid_v: wp.array(dtype=wp.vec3),
     opt_rigid_omega: wp.array(dtype=wp.vec3),
     rigid_id: int,
+    rigid_v: wp.array(dtype=wp.vec3),
+    rigid_omega: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
     if tid == 0:
@@ -129,6 +129,8 @@ class SkipStoneTask(Task):
                     self.stone_rigid_id,
                     self.sim.rigid_quaternion_arrays[self.sim.sim_steps],
                     self.target_rigid_q,
+                ],
+                outputs=[
                     self.sim.loss
                 ]
             )
@@ -156,11 +158,13 @@ class SkipStoneTask(Task):
                     kernel=assign_rigid_init_state_kernel,
                     dim=1,
                     inputs=[
-                        self.sim.rigid_v_arrays[0],
-                        self.sim.rigid_omega_arrays[0],
                         self.opt_rigid_v,
                         self.opt_rigid_omega,
                         self.stone_rigid_id,
+                    ],
+                    outputs=[
+                        self.sim.rigid_v_arrays[0],
+                        self.sim.rigid_omega_arrays[0],
                     ],
                 )
 
@@ -176,7 +180,7 @@ class SkipStoneTask(Task):
 
     def norm_final_grad(self, v_grad, materialMarks):
         # Normalize rigid body gradients if needed
-        # For now, we can just normalize the opt_rigid_v and opt_rigid_omega gradients directly
+        # TODO: 检查是否有冗余代码
         if self.opt_rigid_v.grad:
             grad_np = self.opt_rigid_v.grad.numpy()
             norm = np.linalg.norm(grad_np)
