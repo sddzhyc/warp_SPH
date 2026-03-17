@@ -114,7 +114,7 @@ class SimSPH:
             print("----------------------------------------------------------------")
 
             # Grid related properties
-            self.grid_size = 10.0 * self.smoothing_length
+            self.grid_size = 4.0 * self.smoothing_length
             self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
             print("grid size: ", self.grid_num)
             self.padding = self.smoothing_length
@@ -239,9 +239,13 @@ class SimSPH:
              tm.repair.fill_holes(mesh)
         except:
              pass
-        voxelized_mesh = mesh.voxelized(pitch=self.particle_diameter).fill()
-        voxelized_points_np = voxelized_mesh.points
-        return voxelized_points_np
+        area_per_particle = (np.sqrt(3.0) * 0.5) * (self.particle_diameter ** 2)
+        target_count = max(1, int(np.ceil(mesh.area / max(area_per_particle, 1e-12))))
+        try:
+            sampled_points, _ = tm.sample.sample_surface_even(mesh, target_count)
+        except Exception:
+            sampled_points, _ = tm.sample.sample_surface(mesh, target_count)
+        return sampled_points.astype(np.float32)
 
     def load_points_from_ply_config(self, obj_cfg):
         ply_file = obj_cfg.get("plyFile")

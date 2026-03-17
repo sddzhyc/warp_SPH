@@ -40,7 +40,7 @@ if __name__ == "__main__":
         default="example_sph.usd",
         help="Path to the output USD file.",
     )
-    parser.add_argument("--num_timesteps", type=int, default=160, help="Total number of frames.")
+    parser.add_argument("--num_timesteps", type=int, default=None, help="Total number of frames. If omitted, read from scene config.")
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--test_gradient", action="store_true", help="Run gradient computation test.")
     parser.add_argument("--train", action="store_true", help="Run optimization training loop.")
@@ -48,6 +48,7 @@ if __name__ == "__main__":
     # parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
     parser.add_argument("--ply_path", type=str, default=None, help="Path to PLY file for initialization.")
     parser.add_argument("--lr", type=float, default=0.01, help="Learning rate for optimizer.")
+    parser.add_argument("--reduce_lr", action="store_true", help="Enable ReduceLROnPlateau-based automatic LR decay (PyTorch scheduler).")
     # Grid Search Arguments
     parser.add_argument("--grid_search_vy", action="store_true", help="Run grid search for vy.")
     parser.add_argument("--grid_search_vx", action="store_true", help="Run grid search for vx.")
@@ -71,10 +72,16 @@ if __name__ == "__main__":
     use_custom_grad = args.custom_grad
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
+
+    # Resolve simulation length: CLI > scene config (num_timesteps/numTimesteps) > fallback default.
+    if args.num_timesteps is None:
+        cfg_num_timesteps = config.get_cfg("num_timesteps")
+        args.num_timesteps = int(cfg_num_timesteps) if cfg_num_timesteps is not None else 160
+        print(f"Using num_timesteps from config/default: {args.num_timesteps}")
     # Robust scene name extraction for Windows/Unix paths
     scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
     if use_custom_grad:
-        scene_name += "g2_custom_h4/"
+        scene_name += "g2_custom2_h4/"
     else:
         scene_name += "g2/"
     if args.grid_search_vy:
@@ -95,7 +102,7 @@ if __name__ == "__main__":
         fps = 60
     frame_time = 1.0 / fps
 
-    output_interval = int(frame_time / config.get_cfg("timeStepSize"))
+    output_interval = 10  # int(frame_time / config.get_cfg("timeStepSize"))
     total_time = config.get_cfg("totalTime")
     if total_time == None:
         total_time = 10.0
@@ -242,6 +249,23 @@ if __name__ == "__main__":
             log_dir = f"runs/{scene_name}/{time_str}_lr_{args.lr}"
             writer = None
 
+            lr_scheduler = None
+            torch_lr_optimizer = None
+            if args.reduce_lr:
+                import torch
+                lr_anchor = torch.nn.Parameter(torch.tensor(0.0))
+                torch_lr_optimizer = torch.optim.Adam([lr_anchor], lr=args.lr)
+                lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                    torch_lr_optimizer,
+                    mode="min",
+                    factor=0.5,
+                    patience=5,
+                    threshold=1e-4,
+                    min_lr=1e-5,
+                )
+                sim.optimizer.lr = float(torch_lr_optimizer.param_groups[0]["lr"])
+                print(f"ReduceLROnPlateau enabled: initial lr = {sim.optimizer.lr}")
+
             best_param = None
 
             loss_ema = None
@@ -268,7 +292,10 @@ if __name__ == "__main__":
                     # print("grad rigid_v0:\n", sim.rigid_v_arrays[0].grad.numpy())
                     # for j in range(sim_steps):
                     #     sim.rigid_grad_print(1, j)
-                    
+                    if isinstance(sim.opt_var, list):
+                        print(f"[grad] opt_var grad before norm:\n", [v.grad.numpy() for v in sim.opt_var])
+                    else:
+                        print(f"[grad] opt_var grad before norm:\n", sim.opt_var.grad.numpy())
                     if args.norm_grad:
                         sim.norm_final_grad()
                         if isinstance(sim.opt_var, list):
@@ -278,7 +305,6 @@ if __name__ == "__main__":
 
                     if isinstance(sim.opt_var, list):
                         current_grad = [v.grad.numpy().copy() for v in sim.opt_var]
-                        print("[grad] opt_var grad: ", current_grad)
                         if args.avg_grad:
                             # avg_grad not supported for list opt_var
                             print("avg_grad not supported for list opt_var")
@@ -293,8 +319,7 @@ if __name__ == "__main__":
                         if args.avg_grad:
                             # Use helper function for temporal averaging
                             avg_grad = compute_temporal_avg_grad(grad_buffer, current_grad, args.grad_win)
-                            
-                            print("[grad] fluid avg grad:\n", avg_grad)
+                            print(f"[grad] opt_var grad after temporal averaging:\n", avg_grad)
                             
                             # Create warp array for averaged gradient
                             avg_grad_wp = wp.array(avg_grad, dtype=sim.opt_var.dtype, device=args.device)
@@ -304,6 +329,42 @@ if __name__ == "__main__":
                             sim.optimizer.step([sim.opt_var.grad])
                             grad_fluid = sim.opt_var.grad.numpy()[0]
                         print("fluid opt_v_fluid after optimization:", sim.opt_var.numpy())
+
+                    if lr_scheduler is not None and torch_lr_optimizer is not None:
+                        loss_scalar = float(np.asarray(loss_val).reshape(-1)[0])
+                        prev_lr = float(torch_lr_optimizer.param_groups[0]["lr"])
+                        lr_scheduler.step(loss_scalar)
+                        new_lr = float(torch_lr_optimizer.param_groups[0]["lr"])
+                        sim.optimizer.lr = new_lr
+                        # if new_lr < prev_lr:
+                        print(f"[lr scheduler] ReduceLROnPlateau: {prev_lr:.6e} -> {new_lr:.6e}")
+
+                    if args.iters == 1:
+                        if writer is None: # create writer on first use
+                            writer = tensorboardX.SummaryWriter(log_dir=log_dir)
+                            print(f"TensorBoard step logging to {log_dir}")
+                            
+                        target_id = 1
+                        if target_id < sim.num_objects:
+                            for time_step in range(len(sim.rigid_x_arrays)):
+                                for name, array_list in [
+                                    ("Pos", sim.rigid_x_arrays),
+                                    ("Vel", sim.rigid_v_arrays),
+                                    ("Omega", sim.rigid_omega_arrays),
+                                    ("Quat", sim.rigid_quaternion_arrays),
+                                    ("Force", sim.rigid_force_arrays),
+                                    ("Torque", sim.rigid_torque_arrays)
+                                ]:
+                                    if time_step < len(array_list) and array_list[time_step].grad is not None:
+                                        grad_data = array_list[time_step].grad.numpy()
+                                        if target_id < len(grad_data):
+                                            grad_val = grad_data[target_id]
+                                            if len(grad_val) >= 3:
+                                                writer.add_scalar(f'Rigid_Step_Grad/{name}/x', float(grad_val[0]), time_step)
+                                                writer.add_scalar(f'Rigid_Step_Grad/{name}/y', float(grad_val[1]), time_step)
+                                                writer.add_scalar(f'Rigid_Step_Grad/{name}/z', float(grad_val[2]), time_step)
+                                            if len(grad_val) == 4:
+                                                writer.add_scalar(f'Rigid_Step_Grad/{name}/w', float(grad_val[3]), time_step)
 
                     if args.iters > 1:
                         if writer is None: # create writer on first use
@@ -337,6 +398,15 @@ if __name__ == "__main__":
                                     # Scalar
                                     writer.add_scalar(f'Grad/{var_name}', grad, i)
 
+                            # Log current optimized variable value components under Var/
+                            var_value = var.numpy()
+                            flat_value = np.asarray(var_value).reshape(-1)
+                            if flat_value.size == 1:
+                                writer.add_scalar(f'Var/{var_name}', float(flat_value[0]), i)
+                            else:
+                                for comp_idx, comp_val in enumerate(flat_value):
+                                    writer.add_scalar(f'Var/{var_name}_comp_{comp_idx}', float(comp_val), i)
+
                 # print("rigid_v after optimization:", sim.rbs.rigid_v.numpy())
                 # if sim.num_objects > 0:
                 #     v_opt = sim.rigid_v_arrays[0].numpy()
@@ -351,6 +421,9 @@ if __name__ == "__main__":
                 #     export_backward_data(sim, args.num_timesteps, output_interval, iter_series_prefix)
             
             print("Training finished. Running final simulation with optimized parameters...")
+
+            if writer is not None:
+                writer.close()
 
             print("exporting simulation data in backward")
             print(f"Exporting data to: {series_prefix}")
