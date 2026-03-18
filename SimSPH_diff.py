@@ -35,13 +35,14 @@ def sum_grad_fluid(
 
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, verbose=False):
+    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False):
         super().__init__(config, container, 0, stage_path, ply_path, h_scale)
         self.ply_path = ply_path
         self.sim_steps = sim_steps
         self.train_rate = lr
         self.use_custom_grad = use_custom_grad
         self.use_norm_grad = use_norm_grad
+        self.use_diffFR = use_diffFR
         self.init_diff_phys(self.sim_steps)
         self.init_diff_task() 
 
@@ -59,8 +60,9 @@ class SimSPH_diff(SimSPH):
         self.debug_val_arrays = []
 
         # Initialize arrays for each time step (t=0..sim_steps)
-        for _ in range(self.sim_steps + 1):
-            self.x_arrays.append(wp.zeros_like(self.x, requires_grad=True))
+        for i in range(self.sim_steps + 1):
+            enable_x_q_grad = (i == self.sim_steps or not self.use_diffFR)
+            self.x_arrays.append(wp.zeros_like(self.x, requires_grad=enable_x_q_grad))
             self.v_arrays.append(wp.zeros_like(self.v, requires_grad=True))
             self.rho_arrays.append(wp.zeros_like(self.rho, requires_grad=True))
             if allocate_pressure_arrays:
@@ -107,11 +109,12 @@ class SimSPH_diff(SimSPH):
         # No segment checkpoints or saved grads for rigid bodies
 
         if self.num_objects > 0:
-            for _ in range(self.sim_steps + 1):
-                self.rigid_x_arrays.append(wp.zeros_like(self.rbs.rigid_x, requires_grad=True))
+            for i in range(self.sim_steps + 1):
+                enable_x_q_grad = (i == self.sim_steps or not self.use_diffFR)
+                self.rigid_x_arrays.append(wp.zeros_like(self.rbs.rigid_x, requires_grad=enable_x_q_grad))
+                self.rigid_quaternion_arrays.append(wp.zeros_like(self.rbs.rigid_quaternion, requires_grad=enable_x_q_grad))
                 self.rigid_v_arrays.append(wp.zeros_like(self.rbs.rigid_v, requires_grad=True))
                 self.rigid_omega_arrays.append(wp.zeros_like(self.rbs.rigid_omega, requires_grad=True))
-                self.rigid_quaternion_arrays.append(wp.zeros_like(self.rbs.rigid_quaternion, requires_grad=True))
                 self.rigid_force_arrays.append(wp.zeros_like(self.rbs.rigid_force, requires_grad=True))
                 self.rigid_torque_arrays.append(wp.zeros_like(self.rbs.rigid_torque, requires_grad=True))
                 self.rigid_inertia_arrays.append(wp.zeros_like(self.rbs.rigid_inertia, requires_grad=True))
@@ -554,6 +557,11 @@ class SimSPH_diff(SimSPH):
         #     self.renderer.end_frame()
 
     def export_ply_from_diff(self, series_prefix, time_step, cnt_ply, verbose=False):
+        def grad_or_zeros(wp_array, reference_np, dtype=np.float32):
+            if wp_array is not None and wp_array.grad is not None:
+                return wp_array.grad.numpy()
+            return np.zeros_like(reference_np, dtype=dtype)
+
         np_pos = self.x_arrays[time_step].numpy()
         np_rho = self.rho_arrays[time_step].numpy()
         # m_V: use computed per-particle if available, else fallback to constant m_V0
@@ -587,7 +595,7 @@ class SimSPH_diff(SimSPH):
             dfsph_factor = self.dfsph_factor_arrays[time_step].numpy()
 
         # Gradients
-        grad_x = self.x_arrays[time_step].grad.numpy()
+        grad_x = grad_or_zeros(self.x_arrays[time_step], np_pos)
         grad_v = self.v_arrays[time_step].grad.numpy()
         grad_rho = self.rho_arrays[time_step].grad.numpy()
         if time_step < len(self.pressure_arrays) and self.pressure_arrays[time_step].grad is not None:
@@ -638,8 +646,8 @@ class SimSPH_diff(SimSPH):
             'grad_a_z': grad_a[:,2].astype(np.float32),
         })
     
-        if verbose:
-            print(f"Exporting frame {cnt_ply} to PLY on time step {time_step}.")
+        # if verbose:
+        #     print(f"Exporting frame {cnt_ply} to PLY on time step {time_step}.")
 
     def rigid_grad_print(self, rigid_id, time_step):
         print(f"--- Rigid Body {rigid_id} Gradients at Step {time_step} ---")

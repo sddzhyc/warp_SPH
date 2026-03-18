@@ -19,7 +19,9 @@
 		"maxIterNum": 20,
 		"particleRadius": 0.025, 
 		"radius":  0.025,
-		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]}
+		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]},
+		"end_time": 0.23,
+		"num_timesteps": 1420
 	},
 	"FluidBlocks": [
 	{
@@ -41,19 +43,25 @@
 		"rotationAxis": [0, 0, 1],
 		"rotationAngle": 0,
 		"scale": [0.2, 0.05, 0.2],
-		"velocity": [10, -5, 0.0],
+
+		"velocity": [25, -30, 0.0],
+		"angularVelocity": [0, 0, 0],
+
+		"velocity_init1": [25, -25, 0.0],
+		"angularVelocity_init1": [-3, 20, 6],
+
+		"velocity_opti1": [38.077187, -39.570072,   1.818155],
+		"angularVelocity_opti1": [-6.6752276, 23.925385 ,  9.516759],
+		
 		"velocity_target": [10, -5, 0.0],
+
 		"velocity_old": [25, -16, 0.0],
-		"angularVelocity": [-3, 20, 6],
+		"angularVelocity_old": [-3, 20, 6],
+
 		"density": 2000,
 		"isDynamic": true,
 		"targetX": [1.7, 1.6, 0.0],
 		"targetAngleInDegree": [0, 0, 0]
 	}
-    ],
-	"TaskConfig":
-	{
-		"end_time": 0.23,
-		"end_timesteps": 1420
-	}
+    ]
 }

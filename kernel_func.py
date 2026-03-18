@@ -222,7 +222,7 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
 
         adj_q = 0.0
         # if q <= 0.5:
-        #     adj_q += -adj_coeff * k * (6.0 * q - 2.0) # r < 0.5h: 添加负号:保证核函数二阶导不为负
+        #     adj_q += adj_coeff * k * (6.0 * q - 2.0)
         # else:
         #     factor = 1.0 - q
         #     adj_q += adj_coeff * (2.0 * k * factor)

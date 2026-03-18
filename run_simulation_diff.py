@@ -61,6 +61,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_win", type=int, default=10, help="Window size for gradient averaging.")
     parser.add_argument("--avg_grad", action="store_true", help="Use temporal averaged gradient.")
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
+    parser.add_argument("--use_difffr", action="store_true", help="Enable diffFR mode (sparser cross-step gradient flow).")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
     parser.add_argument("--custom_grad", action="store_true", help="Use custom gradient implementation.")
     h_scale = 1
@@ -70,6 +71,7 @@ if __name__ == "__main__":
     if args.grid_search_vy and args.grid_search_vx:
         raise ValueError("Please set only one of --grid_search_vy or --grid_search_vx.")
     use_custom_grad = args.custom_grad
+    use_difffr = args.use_difffr
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
 
@@ -92,8 +94,10 @@ if __name__ == "__main__":
         scene_name += "grad_win{}".format(args.grad_win)
     if args.norm_grad:
         scene_name += "_normed"
-    if args.method == 1:
-        scene_name += "_dfsph"
+    if use_difffr:
+        scene_name += "_difffr"
+    # if args.method == 1:
+    #     scene_name += "_dfsph"
 
     # export settings
     output_frames = config.get_cfg("exportFrame")
@@ -125,8 +129,7 @@ if __name__ == "__main__":
     # os.makedirs(f"{scene_name}_output", exist_ok=True)
     simulation_method = config.get_cfg("simulationMethod")
 
-    # warp_example code
-    args = parser.parse_known_args()[0]
+    # Reuse the already-resolved args from parse_args() above.
 
     with wp.ScopedDevice(args.device):
         # skip Taichi container initialization
@@ -137,10 +140,10 @@ if __name__ == "__main__":
 
         if args.method == 1:
             sim = SimDFSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
-            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad)
+            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
         else:
             sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
-            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad)
+            h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr)
 
         if args.grid_search_vy or args.grid_search_vx:
             import datetime

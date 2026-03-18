@@ -1,0 +1,58 @@
+{
+	"Configuration": 
+	{
+		"fps" : 240,
+		"domainStart": [-2.1, 0, -0.85],
+		"domainEnd": [2.1, 3.0, 0.85],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 0,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.00016,
+		"stiffness": 50000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.025, 
+		"radius":  0.025,
+		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]}
+	},
+	"FluidBlocks": [
+	{
+		"objectId": 0,
+		"plyFile_old": "./skip_stones/fluid.ply",
+		"start": [-2, 0.1, -0.75],
+		"end": [2, 0.9, 0.75],
+		"translation": [0, 0.0, 0.0],
+		"scale": [1,1,1],
+		"velocity": [0.0, 0.0, 0.0],
+		"density": 1000.0,
+		"color": [50, 100, 200]
+	}],
+	"RigidBodies": [
+	{
+		"objectId": 1,
+		"geometryFile": "./data/models/unit_box.obj",
+		"translation": [-2,1.2,0],
+		"rotationAxis": [0, 0, 1],
+		"rotationAngle": 0,
+		"scale": [0.2, 0.05, 0.2],
+		"velocity": [10, -5, 0.0],
+		"velocity_old": [25, -16, 0.0],
+		"angularVelocity": [-3, 20, 6],
+		"density": 2000,
+		"isDynamic": true,
+		"targetX": [1.7, 1.6, 0.0],
+		"targetAngleInDegree": [0, 0, 0]
+	}
+    ],
+	"TaskConfig":
+	{
+		"end_time": 0.23,
+		"end_timesteps": 1420
+	}
+}
