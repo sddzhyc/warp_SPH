@@ -73,6 +73,7 @@ class SimDFSPH(SimSPH):
                 self.materialMarks,
                 self.m_V,
                 self.smoothing_length,
+                False,
                 self.dfsph_factor
             ]
         )
@@ -219,6 +220,7 @@ class SimDFSPH(SimSPH):
                 self.m_V,
                 self.smoothing_length,
                 int(self.dim),
+                False,
                 self.density_change
             ]
         )
@@ -302,6 +304,7 @@ class SimDFSPH(SimSPH):
                 self.smoothing_length,
                 float(self.dt),
                 self.base_density,
+                False,
                 self.density_adv
             ]
         )

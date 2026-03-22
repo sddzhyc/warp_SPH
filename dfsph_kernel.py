@@ -1,6 +1,9 @@
+from networkx import neighbors
 import warp as wp
 from kernel_func import cubic_kernel_derivative, cubic_kernel_derivative_custom
 from rigid_fluid_coupling import MaterialMarks, MaterialType
+
+neighbor_h_size = 1.0
 
 @wp.kernel
 def compute_dfsph_factor_kernel(
@@ -9,6 +12,7 @@ def compute_dfsph_factor_kernel(
     mtr: MaterialMarks,
     m_V: wp.array(dtype=float),
     smoothing_length: float,
+    use_custom_grad: bool,
     dfsph_factor_out: wp.array(dtype=float)
 ): 
     tid = wp.tid()
@@ -38,7 +42,10 @@ def compute_dfsph_factor_kernel(
         
         if d < smoothing_length:
             if mtr.material[index] == MaterialType.FLUID:
-                 grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                 if use_custom_grad:
+                     grad_W = cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                 else:
+                     grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
                  
                  # grad_p_j = -m_V[j] * grad_W
                  # Using the same convention as taichi
@@ -48,7 +55,10 @@ def compute_dfsph_factor_kernel(
                  grad_p_i -= grad_p_j # Accumulate -grad_p_j -> + m_V[j]*grad_W
                  
             elif mtr.material[index] == MaterialType.SOLID:
-                 grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                 if use_custom_grad:
+                     grad_W = cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                 else:
+                     grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
                  grad_p_j = -m_V[index] * grad_W
                  grad_p_i -= grad_p_j
 
@@ -70,6 +80,7 @@ def compute_density_adv_kernel(
     smoothing_length: float,
     dt: float,
     base_density: float,
+    use_custom_grad: bool,
     density_adv_out: wp.array(dtype=float)
 ):
     tid = wp.tid()
@@ -100,7 +111,10 @@ def compute_density_adv_kernel(
             v_j = particle_v[index]
             
             if mtr.material[index] == MaterialType.FLUID or mtr.material[index] == MaterialType.SOLID:
-                grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
+                if use_custom_grad:
+                    grad_W = cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                else:
+                    grad_W = cubic_kernel_derivative(r_vec, smoothing_length)
                 
                 v_ij = v_i - v_j
                 delta += m_V[index] * wp.dot(v_ij, grad_W)
@@ -119,6 +133,7 @@ def compute_density_change_kernel(
     m_V: wp.array(dtype=float),
     smoothing_length: float,
     dim: int,
+    use_custom_grad: bool,
     density_change_out: wp.array(dtype=float)
 ):
     tid = wp.tid()
@@ -147,7 +162,10 @@ def compute_density_change_kernel(
         if d < smoothing_length:
             if mtr.material[index] == MaterialType.FLUID or mtr.material[index] == MaterialType.SOLID:
                 v_j = particle_v[index]
-                grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
+                if use_custom_grad:
+                    grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
+                else:
+                    grad_w = cubic_kernel_derivative(r_vec, smoothing_length)
                 density_adv += m_V[index] * wp.dot(v_i - v_j, grad_w)
                 num_neighbors += 1
 
@@ -361,7 +379,7 @@ def pressure_solve_iteration_kernel_fluid(
 
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
-        if d < smoothing_length and mtr.material[index] == MaterialType.FLUID:
+        if d < smoothing_length * neighbor_h_size and mtr.material[index] == MaterialType.FLUID:
             b_j = density_adv[index] - 1.0
             k_j = b_j * dfsph_factor[index] * inv_dt2
             k_sum = k_i + k_j
@@ -418,8 +436,9 @@ def pressure_solve_iteration_kernel_solid(
 
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
-        if d < smoothing_length and mtr.material[index] == MaterialType.SOLID:
-            debug_val[i] = wp.min(debug_val[i], wp.float32(d / smoothing_length))
+        if d < smoothing_length * neighbor_h_size and mtr.material[index] == MaterialType.SOLID:
+            if d < smoothing_length * neighbor_h_size:
+                debug_val[i] = wp.max(debug_val[i], wp.float32(d / smoothing_length))
             if wp.abs(k_i) > m_eps:
                 if use_custom_grad:
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)
@@ -473,7 +492,7 @@ def divergence_solve_iteration_kernel_fluid(
 
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
-        if d < smoothing_length and mtr.material[index] == MaterialType.FLUID:
+        if d < smoothing_length * neighbor_h_size and mtr.material[index] == MaterialType.FLUID:
             b_j = density_change[index]
             k_j = b_j * dfsph_factor[index] * inv_dt
             k_sum = k_i + k_j
@@ -529,8 +548,8 @@ def divergence_solve_iteration_kernel_solid(
 
         r_vec = x_i - particle_x[index]
         d = wp.length(r_vec)
-        if d < smoothing_length and mtr.material[index] == MaterialType.SOLID:
-            debug_val[i] = wp.min(debug_val[i], wp.float32(d / smoothing_length))
+        if d < smoothing_length * neighbor_h_size and mtr.material[index] == MaterialType.SOLID:
+            debug_val[i] = wp.max(debug_val[i], wp.float32(d / smoothing_length))
             if wp.abs(k_i) > m_eps:
                 if use_custom_grad:
                     grad_w = cubic_kernel_derivative_custom(r_vec, smoothing_length)

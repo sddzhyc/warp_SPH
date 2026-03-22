@@ -45,15 +45,19 @@
 		"rotationAngle": 0,
 		"scale": [0.2, 0.05, 0.2],
 
-		"velocity": [25, -25, 0.0],
+		"velocity": [10, -5, 0.0],
 		"angularVelocity": [0, 0, 0],
+
+		"velocity_3": [10, -5, 0.0],
+		"angularVelocity_3": [0, 0, 0],
 
 		"velocity_2": [25, -25, 0.0],
 		"angularVelocity_2": [0, 0, 0],
-
-		"velocity_opti2": [29.2807 , -13.7251 ,    -3.7723],
-		"angularVelocity_opti2": [-4.9853 , 20.1326  ,  5.266],
-	
+		
+		"opti2": "[ 32.393375 , -12.504431 ,   1.1839575]], dtype=float32), array([[-6.45517  ,  2.0258448,  7.7071548]]",
+		
+		"velocity_opti1_2": [29.2807 , -13.7251 ,    -3.7723],
+		"angularVelocity_opti1_2": [-4.9853 , 20.1326  ,  5.266],
 
 		"velocity_opti1": [26.488722 , -14.523201 ,   1.3094168],
 		"angularVelocity_opti1": [-4.3880954, 18.697014 ,  7.5453134],

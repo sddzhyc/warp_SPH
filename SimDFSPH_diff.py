@@ -123,6 +123,7 @@ class SimDFSPH_diff(SimSPH_diff):
                     self.materialMarks,
                     self.m_V,
                     self.smoothing_length,
+                    self.use_custom_grad,
                     dfsph_fac
                 ]
             )
@@ -142,6 +143,7 @@ class SimDFSPH_diff(SimSPH_diff):
                             self.m_V,
                             self.smoothing_length,
                             int(self.dim),
+                            self.use_custom_grad,
                         ],
                         outputs=[
                             density_change_buf,
@@ -196,6 +198,7 @@ class SimDFSPH_diff(SimSPH_diff):
                                 self.m_V,
                                 self.smoothing_length,
                                 int(self.dim),
+                                self.use_custom_grad,
                             ],
                             outputs=[
                                 density_change_buf,
@@ -272,6 +275,7 @@ class SimDFSPH_diff(SimSPH_diff):
                             self.smoothing_length,
                             self.frame_dt,
                             self.base_density,
+                            self.use_custom_grad,
                         ],
                         outputs=[
                             density_adv_buf
@@ -333,6 +337,7 @@ class SimDFSPH_diff(SimSPH_diff):
                                 self.smoothing_length,
                                 self.frame_dt,
                                 self.base_density,
+                                self.use_custom_grad,
                             ],
                             outputs=[
                                 density_adv_buf

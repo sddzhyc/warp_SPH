@@ -64,6 +64,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_difffr", action="store_true", help="Enable diffFR mode (sparser cross-step gradient flow).")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
     parser.add_argument("--custom_grad", action="store_true", help="Use custom gradient implementation.")
+    parser.add_argument("--init_id", type=int, default=None, help="Select initial rigid-body values from scene JSON keys like velocity_i / angularVelocity_i.")
     h_scale = 1
 
     parser.add_argument("export_all", action="store_true", help="Export all simulation data.")
@@ -75,6 +76,19 @@ if __name__ == "__main__":
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
 
+    if args.init_id is not None:
+        if args.init_id < 0:
+            raise ValueError("--init_id must be >= 0")
+        velocity_key = f"velocity_{args.init_id}"
+        angular_velocity_key = f"angularVelocity_{args.init_id}"
+        rigid_bodies = config.get_rigid_bodies()
+        for rigid in rigid_bodies:
+            if velocity_key in rigid:
+                rigid["velocity"] = rigid[velocity_key]
+            if angular_velocity_key in rigid:
+                rigid["angularVelocity"] = rigid[angular_velocity_key]
+        print(f"Using initial rigid-body keys: {velocity_key}, {angular_velocity_key}")
+
     # Resolve simulation length: CLI > scene config (num_timesteps/numTimesteps) > fallback default.
     if args.num_timesteps is None:
         cfg_num_timesteps = config.get_cfg("num_timesteps")
@@ -82,6 +96,8 @@ if __name__ == "__main__":
         print(f"Using num_timesteps from config/default: {args.num_timesteps}")
     # Robust scene name extraction for Windows/Unix paths
     scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
+    if args.init_id is not None:
+        scene_name += f"init{args.init_id}/"
     if use_custom_grad:
         scene_name += "g2_custom2_h4/"
     else:
