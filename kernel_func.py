@@ -1,4 +1,3 @@
-from http.client import PRECONDITION_FAILED
 import warp as wp
 
 @wp.func
@@ -175,10 +174,11 @@ def cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
             res = k * (-factor * factor) * grad_q
     return res
 
+custom_h_scale, custom_grad_scale = 0., 0. # 4.0, 0.1 # 1.0, 0.0001
 
-@wp.func_grad(cubic_kernel_derivative_custom)
+# @wp.func_grad(cubic_kernel_derivative_custom)
 def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
-    h = support_radius * 4.0
+    h = support_radius * custom_h_scale
     dim = 3
     # forward replay
     k_base = 1.0
@@ -231,31 +231,39 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
 
         adj_r_norm += adj_q * inv_h
         adj_r += adj_r_norm * (r * inv_r_norm)
+    wp.adjoint[r] += adj_r * custom_grad_scale # Add scale param 
 
-    wp.adjoint[r] += adj_r * 0.1 # Add scale param 
+@wp.func_grad(cubic_kernel_derivative_custom)
+def adj_cubic_kernel_derivative_2(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
+    wp.adjoint[r] += adj_ret * custom_grad_scale #  (-custom_grad_scale)
 
+use_replay_kernel = True
+replay_scale = 0.01
 
-# @wp.func_replay(cubic_kernel_derivative)
-# def replay_cubic_kernel_derivative(r: wp.vec3, support_radius: float):
-#     dim = 3
-#     h = support_radius
-#     # derivative of cubic spline smoothing kernel
-#     k = 1.0
-#     if dim == 1:
-#         k = 4. / 3.
-#     elif dim == 2:
-#         k = 40. / 7. / wp.pi
-#     elif dim == 3:
-#         k = 8. / wp.pi
-#     k = 6. * k / h ** float(dim)
-#     r_norm = wp.length(r)
-#     q = r_norm / h
-#     res = wp.vec3()
-#     if r_norm > 1e-5 and q <= 1.0:
-#         grad_q = r / (r_norm * h)
-#         if q <= 0.5:
-#             res = k * q * (3.0 * q - 2.0) * grad_q
-#         else:
-#             factor = 1.0 - q
-#             res = k * (-factor * factor) * grad_q
-#     return res
+if use_replay_kernel:
+    print("Using replay kernel for cubic_kernel_derivative_custom")
+    # @wp.func_replay(cubic_kernel_derivative_custom)
+    @wp.func
+    def replay_cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
+        dim = 3
+        h = support_radius
+        # derivative of cubic spline smoothing kernel
+        k = 1.0
+        if dim == 1:
+            k = 4. / 3.
+        elif dim == 2:
+            k = 40. / 7. / wp.pi
+        elif dim == 3:
+            k = 8. / wp.pi
+        k = 6. * k / h ** float(dim)
+        r_norm = wp.length(r)
+        q = r_norm / h
+        res = wp.vec3()
+        if r_norm > 1e-5 and q <= 1.0:
+            grad_q = r / (r_norm * h)
+            if q <= 0.5:
+                res = k * q * (3.0 * q - 2.0) * grad_q
+            else:
+                factor = 1.0 - q
+                res = k * (-factor * factor) * grad_q
+        return res * replay_scale

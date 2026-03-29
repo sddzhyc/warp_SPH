@@ -117,44 +117,78 @@ def wp_eval_cubic_kernel(x_vals_np, h):
 
     return out_vals.numpy().astype(np.float32)
 
+
+# 新增kernel包装replay_cubic_kernel_derivative_custom
+@wp.kernel
+def compute_replay_kernel_derivative(
+    x_vals: wp.array(dtype=float),
+    h: float,
+    out_grads: wp.array(dtype=wp.vec3)
+):
+    tid = wp.tid()
+    x = x_vals[tid]
+    r_vec = wp.vec3(x, 0.0, 0.0)
+    out_grads[tid] = kernel_func.replay_cubic_kernel_derivative_custom(r_vec, h)
+
+def wp_eval_replay_cubic_kernel_derivative(x_vals_np, h):
+    sample_count = x_vals_np.shape[0]
+    x_vals = wp.array(x_vals_np, dtype=float)
+    out_grads = wp.zeros(sample_count, dtype=wp.vec3)
+
+    wp.launch(
+        kernel=compute_replay_kernel_derivative,
+        dim=sample_count,
+        inputs=[x_vals, h, out_grads]
+    )
+    # 只取x分量
+    return out_grads.numpy()[:, 0].astype(np.float32)
+
 def plot_kernel_derivative():
-    h = 1.0
+    h = 0.1
+    x_min = 0.5 * h
+    x_max = 1.2 * h
     # Sample points along the positive x-axis only (x > 0)
-    x_vals_np = np.linspace(1e-3, 2.5 * h, 500).astype(np.float32)
+    x_vals_np = np.linspace(x_min, x_max, 500).astype(np.float32)
 
     # Extract the evaluations (both forward gradient and adjoint gradient from Warp autograd)
+
     grad_x_vals, adj_grad_x_vals = wp_adj_cubic_kernel_derivative(x_vals_np, h)
-    np_adj_grad_x_vals = np_adj_cubic_kernel_derivative(x_vals_np, h)
+    original_adj_grad_x_vals = np_adj_cubic_kernel_derivative(x_vals_np, h)
     kernel_vals = wp_eval_cubic_kernel(x_vals_np, h)
+    replay_grad_x_vals = wp_eval_replay_cubic_kernel_derivative(x_vals_np, h)
 
-    
     # kernel_vals *= 0.01
-    np_adj_grad_x_vals *= 0.5
-    adj_grad_x_vals *= 1.0
+    original_adj_grad_x_vals *= 1.0
+    plot_scale = 100.0
+    adj_grad_x_vals *= plot_scale
+    replay_plot_scale = 1.0
+    replay_grad_x_vals *= replay_plot_scale
 
-    adj_min = float(np.min(adj_grad_x_vals))
-    adj_max = float(np.max(adj_grad_x_vals))
+    print(adj_grad_x_vals[:10])
+    adj_min = float(np.min([original_adj_grad_x_vals.min(), adj_grad_x_vals.min(), replay_grad_x_vals.min()]))
+    adj_max = float(np.max([original_adj_grad_x_vals.max(), adj_grad_x_vals.max(), replay_grad_x_vals.max()]))
     adj_span = adj_max - adj_min
     y_pad = adj_span * 0.1
 
     plt.figure(figsize=(10, 6))
     plt.plot(x_vals_np, grad_x_vals, label='Gradient $\\nabla W$ (x-component)', linewidth=2)
-    plt.plot(x_vals_np, adj_grad_x_vals, label='new Gradient 50*$\\nabla^2 W$', linewidth=2, linestyle='-.')
-    plt.plot(x_vals_np, np_adj_grad_x_vals, label='Original Gradient 0.5*$\\nabla^2 W$', linewidth=2, linestyle='--')
+    # plt.plot(x_vals_np, adj_grad_x_vals, label=f'new Gradient {plot_scale}*$\\nabla^2 W$', linewidth=2, linestyle='-.')
+    # plt.plot(x_vals_np, original_adj_grad_x_vals, label='Original Gradient $\\nabla^2 W$', linewidth=2, linestyle='--')
+    plt.plot(x_vals_np, replay_grad_x_vals, label=f'Replay Kernel {replay_plot_scale}*$\\nabla W_new$', linewidth=2, linestyle=':')
     plt.plot(x_vals_np, kernel_vals, label='Kernel Value $W(x)$', linewidth=2, color='tab:purple')
-    
+
     # Mark key regions
     plt.axvline(x=0, color='k', linestyle='-', alpha=0.3)
     plt.axvline(x=h, color='r', linestyle='--', label='Support Radius (h)')
     plt.axvline(x=0.5*h, color='g', linestyle=':', label='0.5h (Spline knot)')
-    
+
     plt.title(f'Cubic Kernel Derivative Profile (dim=3, h={h})')
     plt.xlabel('Position x')
     plt.ylabel('Derivative Value (Gradient along x)')
     plt.ylim(adj_min - y_pad, adj_max + y_pad)
     plt.grid(True, alpha=0.3)
     plt.legend()
-    
+
     # output_filename = 'cubic_kernel_derivative_plot.png'
     # plt.savefig(output_filename)
     # print(f"Plot saved to {output_filename}")

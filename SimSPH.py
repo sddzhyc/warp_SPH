@@ -12,6 +12,8 @@ import warp as wp
 import trimesh as tm
 import json
 from functools import reduce
+
+HASH_GRID_SIZE_SCALE = 2
 class SimSPH:
     def initialize(self):
         print(f"Initialized particle volumes m_V0 = {self.m_V0}")
@@ -114,7 +116,7 @@ class SimSPH:
             print("----------------------------------------------------------------")
 
             # Grid related properties
-            self.grid_size = 4.0 * self.smoothing_length
+            self.grid_size = 2.0 * self.smoothing_length # 4.0 * self.smoothing_length
             self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
             print("grid size: ", self.grid_num)
             self.padding = self.smoothing_length
