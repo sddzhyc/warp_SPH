@@ -174,7 +174,7 @@ def cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
             res = k * (-factor * factor) * grad_q
     return res
 
-custom_h_scale, custom_grad_scale = 0., 0. # 4.0, 0.1 # 1.0, 0.0001
+custom_h_scale, custom_grad_scale = 0., 0.0001 # 4.0, 0.1 # 1.0, 0.0001
 
 # @wp.func_grad(cubic_kernel_derivative_custom)
 def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):

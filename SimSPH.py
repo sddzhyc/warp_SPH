@@ -13,10 +13,10 @@ import trimesh as tm
 import json
 from functools import reduce
 
-HASH_GRID_SIZE_SCALE = 2
+HASH_GRID_SIZE_SCALE = 2 # TODO: 注意size过小对前向模拟结果的影响
 class SimSPH:
     def initialize(self):
-        print(f"Initialized particle volumes m_V0 = {self.m_V0}")
+        # print(f"Initialized particle volumes m_V0 = {self.m_V0}")
         # ps.initialize_particle_system()
         # TODO: 实现流固耦合：移植compute_rigid_rest_cm、compute_rigid_mass_info
         wp.launch(
@@ -116,7 +116,7 @@ class SimSPH:
             print("----------------------------------------------------------------")
 
             # Grid related properties
-            self.grid_size = 2.0 * self.smoothing_length # 4.0 * self.smoothing_length
+            self.grid_size = HASH_GRID_SIZE_SCALE * self.smoothing_length # 4.0 * self.smoothing_length
             self.grid_num = np.ceil(self.domain_size / self.grid_size).astype(int)
             print("grid size: ", self.grid_num)
             self.padding = self.smoothing_length
@@ -441,7 +441,7 @@ class SimSPH:
         print(f"Loaded params: radius={self.particle_radius}, m_V0={self.m_V0}")
         
         # Grid
-        self.grid_size = 10.0 * self.smoothing_length
+        # self.grid_size = 10.0 * self.smoothing_length
         grid_dims = np.ceil((self.domain_end - self.domain_start) / self.grid_size).astype(int)
         self.grid_num = grid_dims
         self.grid = wp.HashGrid(self.grid_num[0], self.grid_num[1], self.grid_num[2])

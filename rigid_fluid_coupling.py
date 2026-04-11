@@ -301,7 +301,7 @@ def solve_rigid_body_diff(
     
     rigid_x_out: wp.array(dtype=wp.vec3),
     rigid_v_out: wp.array(dtype=wp.vec3),
-    rigid_force_out: wp.array(dtype=wp.vec3), #TODO: 检查是否有必要置0
+    rigid_force_out: wp.array(dtype=wp.vec3), 
     rigid_quaternion_out: wp.array(dtype=wp.quat),
     rigid_omega_out: wp.array(dtype=wp.vec3),
     rigid_torque_out: wp.array(dtype=wp.vec3),

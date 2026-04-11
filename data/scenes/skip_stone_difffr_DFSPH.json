@@ -48,6 +48,14 @@
 		"velocity": [10, -5, 0.0],
 		"angularVelocity": [0, 0, 0],
 
+		"velocity_5": [20, 0, 0.0],
+		"angularVelocity_5": [0, 0, 0],
+
+
+		"velocity_4": [20, -20, 0.0],
+		"angularVelocity_4": [0, 0, 0],
+
+
 		"velocity_3": [10, -5, 0.0],
 		"angularVelocity_3": [0, 0, 0],
 

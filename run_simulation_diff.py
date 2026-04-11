@@ -1,7 +1,6 @@
 import os
 import datetime
 import argparse
-import argparse
 import warp as wp
 import warp.optim
 import numpy as np
@@ -18,9 +17,9 @@ wp.config.verbose = False
 warp.config.verbose_warnings = False
 warp.config.quiet = False   
 
-def export_backward_data(sim, num_timesteps, output_interval, series_prefix):
+def export_backward_data(sim, sim_steps, output_interval, series_prefix):
     cnt_ply = 0
-    for time_step in range(num_timesteps):
+    for time_step in range(sim_steps):
         if time_step % output_interval == 0:
             sim.export_ply_from_diff(f'{series_prefix}', time_step, cnt_ply )
             cnt_ply += 1
@@ -204,6 +203,8 @@ if __name__ == "__main__":
     parser.add_argument("--reduce_lr", action="store_true", help="Enable ReduceLROnPlateau-based automatic LR decay (PyTorch scheduler).")
     parser.add_argument("--min_lr", type=float, default=1e-5, help="Minimum LR threshold for scheduler and LR-based early stop.")
     # Grid Search Arguments
+    parser.add_argument("--vx", type=float, default=None, help="Initial vx override.")
+    parser.add_argument("--vy", type=float, default=None, help="Initial vy override.")
     parser.add_argument("--grid_search", action="store_true", help="Run 2D grid search for vx and vy together.")
     parser.add_argument("--grid_search_vy", action="store_true", help="Run grid search for vy.")
     parser.add_argument("--grid_search_vx", action="store_true", help="Run grid search for vx.")
@@ -216,7 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_win", type=int, default=10, help="Window size for gradient averaging.")
     parser.add_argument("--avg_grad", action="store_true", help="Use temporal averaged gradient.")
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
-    parser.add_argument("--use_difffr", action="store_true", help="Enable diffFR mode (sparser cross-step gradient flow).")
+    parser.add_argument("--difffr", action="store_true", help="Enable diffFR mode (sparser cross-step gradient flow).")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
     parser.add_argument("--custom_grad", action="store_true", help="Use custom gradient implementation.")
     parser.add_argument("--init_id", type=int, default=None, help="Select initial rigid-body values from scene JSON keys like velocity_i / angularVelocity_i.")
@@ -228,7 +229,7 @@ if __name__ == "__main__":
     if grid_search_mode_count > 1:
         raise ValueError("Please set only one of --grid_search, --grid_search_vy, or --grid_search_vx.")
     use_custom_grad = args.custom_grad
-    use_difffr = args.use_difffr
+    use_difffr = args.difffr
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
 
@@ -245,11 +246,14 @@ if __name__ == "__main__":
                 rigid["angularVelocity"] = rigid[angular_velocity_key]
         print(f"Using initial rigid-body keys: {velocity_key}, {angular_velocity_key}")
 
-    # Resolve simulation length: CLI > scene config (num_timesteps/numTimesteps) > fallback default.
-    if args.num_timesteps is None:
-        cfg_num_timesteps = config.get_cfg("num_timesteps")
-        args.num_timesteps = int(cfg_num_timesteps) if cfg_num_timesteps is not None else 160
-        print(f"Using num_timesteps from config/default: {args.num_timesteps}")
+    end_time = config.get_cfg("end_time")
+    if end_time is None:
+        raise ValueError("Scene config must define end_time.")
+    time_step_size = config.get_cfg("timeStepSize")
+    if time_step_size is None:
+        raise ValueError("Scene config must define timeStepSize to derive simulation steps from end_time.")
+    sim_steps = max(1, int(np.ceil(float(end_time) / float(time_step_size))))
+    print(f"Using sim_steps derived from end_time={end_time} and timeStepSize={time_step_size}: {sim_steps}")
     # Robust scene name extraction for Windows/Unix paths
     scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
     if args.init_id is not None:
@@ -259,14 +263,14 @@ if __name__ == "__main__":
         scene_name += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
         if use_replay_kernel:
             scene_name += f"replay_{replay_scale}/"
+    elif use_difffr:
+        scene_name += "g2_difffr/"
     else:
         scene_name += "g2/"
     if args.avg_grad:
         scene_name += "grad_win{}".format(args.grad_win)
     if args.norm_grad:
         scene_name += "_normed"
-    if use_difffr:
-        scene_name += "_difffr"
     # if args.method == 1:
     #     scene_name += "_dfsph"
 
@@ -305,10 +309,6 @@ if __name__ == "__main__":
     with wp.ScopedDevice(args.device):
         # skip Taichi container initialization
         container = None
-        # If running visualization loop (not training/testing), we need enough steps allocated
-        # sim_steps = args.sim_steps 
-        sim_steps = args.num_timesteps
-
         if args.method == 1:
             sim = SimDFSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
             h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
@@ -316,6 +316,28 @@ if __name__ == "__main__":
             sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
             h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr)
 
+        if args.vx is not None or args.vy is not None:
+            if isinstance(sim.opt_var, list):
+                target_var = sim.opt_var[0]
+            else:
+                target_var = sim.opt_var
+            
+            initial_val_np = target_var.numpy().copy()
+            if args.vx is not None:
+                initial_val_np[0][0] = args.vx
+            if args.vy is not None:
+                initial_val_np[0][1] = args.vy
+                
+            new_var = wp.array(initial_val_np, dtype=wp.vec3, device=args.device, requires_grad=True)
+            if isinstance(sim.opt_var, list):
+                sim.opt_var[0] = new_var
+                if hasattr(sim.task, 'opt_rigid_v'):
+                    sim.task.opt_rigid_v = new_var
+            else:
+                sim.opt_var = new_var
+                if hasattr(sim.task, 'opt_v_fluid'):
+                    sim.task.opt_v_fluid = new_var
+            print(f"Overridden initial opt_var to: {sim.task.opt_rigid_v.numpy()}")
         if args.grid_search or args.grid_search_vy or args.grid_search_vx:
             import csv
             
@@ -362,6 +384,7 @@ if __name__ == "__main__":
                 for vy_idx, vy_value in enumerate(vy_values):
                     sample_idx = vx_idx * len(vy_values) + vy_idx
 
+                    del sim # Ensure we free memory from previous sim before creating a new one for the next sample
                     # Re-instantiate sim for each sample
                     if args.method == 1:
                         sim = SimDFSPH_diff(config, stage_path=args.stage_path, container=container, sim_steps=sim_steps, ply_path=args.ply_path, lr=args.lr, h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
@@ -457,17 +480,24 @@ if __name__ == "__main__":
         elif args.train:
 
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_dir = f"runs/{scene_name}/{time_str}_lr_{args.lr}"
+            log_vx = sim.task.opt_rigid_v.numpy()[0][0] if hasattr(sim.task, 'opt_rigid_v') else None
+            log_vy = sim.task.opt_rigid_v.numpy()[0][1] if hasattr(sim.task, 'opt_rigid_v') else None
+            log_dir = f"runs/{scene_name}/vx_{log_vx}_vy_{log_vy}/{time_str}_lr_{args.lr}"
 
             sim.reset()  # Ensure we start from the initial state before training
-            run_training(sim, args, log_dir=log_dir, enable_writer=True)
+            last_loss = run_training(sim, args, log_dir=log_dir, enable_writer=True)
+            if last_loss is not None:
+                try:
+                    print(f"FINAL_LOSS: {float(last_loss):.6f}")
+                except Exception:
+                    print(f"FINAL_LOSS: {last_loss}")
 
             print(f"exporting simulation data in backward to: {series_prefix}")
-            export_backward_data(sim, args.num_timesteps, output_interval, series_prefix)
+            export_backward_data(sim, sim_steps, output_interval, series_prefix)
             # sim.print_all_rigid_grads()
         else:
             cnt_ply = 0
-            for time_step in range(args.num_timesteps):
+            for time_step in range(sim_steps):
                 # example.render()
                 if time_step % output_interval == 0:
                     if output_ply:

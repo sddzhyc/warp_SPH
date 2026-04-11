@@ -43,6 +43,8 @@ python .\run_simulation_diff.py --scene_file data\scenes\diff-demo2-1.json --tra
 
   python .\run_simulation_diff.py --ply_path .\skip_stones\  --scene_file .\data\scenes\skip_stone_difffr.json --train --iters 400 --lr 0.05 --num_timesteps 1400
 
+
+  python ./run_simulation_diff.py  --scene_file ./data/scenes/skip_stone_difffr_DFSPH.json --lr 0.2 --method 1 --reduce_lr --init_id 3 --difffr --train --iters 100 --gird_search
 ## Reference
 
 ### reference resopitory
