@@ -1,6 +1,7 @@
 import os
 import datetime
 import argparse
+import kernel_func as kf
 import warp as wp
 import warp.optim
 import numpy as np
@@ -10,7 +11,7 @@ from SimDFSPH_diff import SimDFSPH_diff
 from SimSPH import HASH_GRID_SIZE_SCALE
 from config_builder import SimConfig
 from plot_utils import plot_grid_search_results, save_grid_search_to_csv
-from kernel_func import custom_grad_scale, custom_h_scale, use_replay_kernel, replay_scale
+from kernel_func import custom_grad_scale, custom_h_scale, use_0_order_grad, use_replay_kernel, auto_replay_scale_from_h_py
 
 # wp.config.verify_autograd_array_access = True
 wp.config.verbose = False
@@ -81,17 +82,12 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
             print(f"Loss State Info: {state_info}")
 
         if sim.num_objects > 0:
-            if isinstance(sim.opt_var, list):
-                print(f"[grad] opt_var grad before norm:\n", [v.grad.numpy() for v in sim.opt_var])
-            else:
-                print(f"[grad] opt_var grad before norm:\n", sim.opt_var.grad.numpy())
+            print(f"[grad] opt_var grad:\n", [v.grad.numpy() for v in sim.opt_var])
+            print(f"[grad] sim.rigid_v_arrays[0] grad:\n", sim.rigid_v_arrays[0].grad.numpy())
 
             if args.norm_grad:
                 sim.norm_final_grad()
-                if isinstance(sim.opt_var, list):
-                    print("[grad] opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
-                else:
-                    print("[grad] opt_var grad after norm:\n", sim.opt_var.grad.numpy())
+                print("[grad] opt_var grad after norm:\n", [v.grad.numpy() for v in sim.opt_var])
 
             if isinstance(sim.opt_var, list):
                 if args.avg_grad:
@@ -254,17 +250,27 @@ if __name__ == "__main__":
         raise ValueError("Scene config must define timeStepSize to derive simulation steps from end_time.")
     sim_steps = max(1, int(np.ceil(float(end_time) / float(time_step_size))))
     print(f"Using sim_steps derived from end_time={end_time} and timeStepSize={time_step_size}: {sim_steps}")
+
+    if use_replay_kernel:
+        particle_radius = config.get_cfg("particleRadius")
+        support_radius = float(particle_radius) * 4.0 * float(h_scale)
+        kf.replay_scale = auto_replay_scale_from_h_py(support_radius)
+        print(f"Computed replay_scale from support_radius={support_radius}: {kf.replay_scale}")
+
     # Robust scene name extraction for Windows/Unix paths
     scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
     if args.init_id is not None:
         scene_name += f"init{args.init_id}/"
     scene_name += f"hg{HASH_GRID_SIZE_SCALE}/"
+    if use_difffr:
+        scene_name += "difffr/"
     if use_custom_grad:
-        scene_name += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
+        if use_0_order_grad:
+            scene_name += f"g2_custom_const{custom_grad_scale}/"
+        else:
+            scene_name += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
         if use_replay_kernel:
-            scene_name += f"replay_{replay_scale}/"
-    elif use_difffr:
-        scene_name += "g2_difffr/"
+            scene_name += f"replay_{kf.replay_scale}/"
     else:
         scene_name += "g2/"
     if args.avg_grad:
@@ -428,7 +434,7 @@ if __name__ == "__main__":
                         loss_val = 1e9
 
                     current_target_var = sim.opt_var[0] if isinstance(sim.opt_var, list) else sim.opt_var
-                    print(f"[grad] opt_var grad before norm:\n", current_target_var.grad.numpy())
+
                     if args.norm_grad:
                         sim.norm_final_grad()
                         print("[grad] opt_var grad after norm:\n", current_target_var.grad.numpy())

@@ -167,10 +167,12 @@ class SkipStoneTask(Task):
                         self.sim.rigid_omega_arrays[0],
                     ],
                 )
+                # self.sim.rigid_v_arrays[0] = wp.array(self.opt_rigid_v[0], dtype=wp.vec3, device=self.opt_rigid_v.device)
+                # self.sim.rigid_omega_arrays[0] = wp.array(self.opt_rigid_omega[0], dtype=wp.vec3, device=self.opt_rigid_omega.device)
 
             # Update rbs pointers
-            wp.copy(self.sim.rbs.rigid_v, self.sim.rigid_v_arrays[0])
-            wp.copy(self.sim.rbs.rigid_omega, self.sim.rigid_omega_arrays[0])
+            self.sim.rbs.rigid_v = self.sim.rigid_v_arrays[0]
+            self.sim.rbs.rigid_omega = self.sim.rigid_omega_arrays[0]
 
     def clear_grad(self):
         if self.opt_rigid_v.grad:
@@ -178,9 +180,8 @@ class SkipStoneTask(Task):
         if self.opt_rigid_omega.grad:
             self.opt_rigid_omega.grad.zero_()
 
-    def norm_final_grad(self, v_grad, materialMarks):
+    def norm_final_grad(self):
         # Normalize rigid body gradients if needed
-        # TODO: 检查是否有冗余代码
         if self.opt_rigid_v.grad:
             grad_np = self.opt_rigid_v.grad.numpy()
             norm = np.linalg.norm(grad_np)

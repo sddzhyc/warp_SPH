@@ -22,5 +22,5 @@ class Task:
     def get_loss_state_info(self):
         return {}
 
-    def norm_final_grad(self, v_grad, materialMarks):
+    def norm_final_grad(self):
         pass

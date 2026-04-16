@@ -118,7 +118,6 @@ def wp_eval_cubic_kernel(x_vals_np, h):
     return out_vals.numpy().astype(np.float32)
 
 
-# 新增kernel包装replay_cubic_kernel_derivative_custom
 @wp.kernel
 def compute_replay_kernel_derivative(
     x_vals: wp.array(dtype=float),
@@ -128,7 +127,7 @@ def compute_replay_kernel_derivative(
     tid = wp.tid()
     x = x_vals[tid]
     r_vec = wp.vec3(x, 0.0, 0.0)
-    out_grads[tid] = kernel_func.replay_cubic_kernel_derivative_custom(r_vec, h)
+    out_grads[tid] = kernel_func.replay_cubic_kernel_derivative_custom_plot(r_vec, h)
 
 def wp_eval_replay_cubic_kernel_derivative(x_vals_np, h):
     sample_count = x_vals_np.shape[0]
@@ -144,8 +143,8 @@ def wp_eval_replay_cubic_kernel_derivative(x_vals_np, h):
     return out_grads.numpy()[:, 0].astype(np.float32)
 
 def plot_kernel_derivative():
-    h = 0.1
-    x_min = 0.5 * h
+    h = 0.025
+    x_min = 0. * h
     x_max = 1.2 * h
     # Sample points along the positive x-axis only (x > 0)
     x_vals_np = np.linspace(x_min, x_max, 500).astype(np.float32)
@@ -159,14 +158,29 @@ def plot_kernel_derivative():
 
     # kernel_vals *= 0.01
     original_adj_grad_x_vals *= 1.0
-    plot_scale = 100.0
+    plot_scale = 1.0
     adj_grad_x_vals *= plot_scale
     replay_plot_scale = 1.0
     replay_grad_x_vals *= replay_plot_scale
 
-    print(adj_grad_x_vals[:10])
-    adj_min = float(np.min([original_adj_grad_x_vals.min(), adj_grad_x_vals.min(), replay_grad_x_vals.min()]))
-    adj_max = float(np.max([original_adj_grad_x_vals.max(), adj_grad_x_vals.max(), replay_grad_x_vals.max()]))
+    # 打印kernel_vals的最大值及其对应的x值
+    kernel_max_idx = np.argmax(kernel_vals)
+    print(f"kernel_vals max: {kernel_vals[kernel_max_idx]:.6f} at x = {x_vals_np[kernel_max_idx]:.6f}")
+    # # 打印adj_grad_x_vals的最大值及其对应的x值
+    # adj_max_idx = np.argmax(adj_grad_x_vals)
+    # print(f"adj_grad_x_vals max: {adj_grad_x_vals[adj_max_idx]:.6f} at x = {x_vals_np[adj_max_idx]:.6f}")
+    # # 打印original_adj_grad_x_vals的最大值及其对应的x值
+    # orig_adj_max_idx = np.argmax(replay_grad_x_vals)
+    # print(f"replay_grad_x_vals max: {replay_grad_x_vals[orig_adj_max_idx]:.6f} at x = {replay_grad_x_vals[orig_adj_max_idx]:.6f}")
+    # 打印grad_x_vals的最大值及其对应的x值
+    grad_max_idx = np.argmin(grad_x_vals)
+    print(f"grad_x_vals min: {grad_x_vals[grad_max_idx]:.6f} at x = {x_vals_np[grad_max_idx]:.6f}")
+    # 打印replay_grad_x_vals的最大值及其对应的x值
+    replay_max_idx = np.argmin(replay_grad_x_vals)
+    print(f"replay_grad_x_vals min: {replay_grad_x_vals[replay_max_idx]:.6f} at x = {x_vals_np[replay_max_idx]:.6f}")
+    
+    adj_min = float(np.min([grad_x_vals.min(), replay_grad_x_vals.min()]))
+    adj_max = float(np.max([grad_x_vals.max(), replay_grad_x_vals.max()]))
     adj_span = adj_max - adj_min
     y_pad = adj_span * 0.1
 

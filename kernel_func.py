@@ -1,3 +1,4 @@
+import math
 import warp as wp
 
 @wp.func
@@ -174,6 +175,7 @@ def cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
             res = k * (-factor * factor) * grad_q
     return res
 
+use_0_order_grad = True
 custom_h_scale, custom_grad_scale = 0., 0.0001 # 4.0, 0.1 # 1.0, 0.0001
 
 # @wp.func_grad(cubic_kernel_derivative_custom)
@@ -233,17 +235,33 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
         adj_r += adj_r_norm * (r * inv_r_norm)
     wp.adjoint[r] += adj_r * custom_grad_scale # Add scale param 
 
-@wp.func_grad(cubic_kernel_derivative_custom)
-def adj_cubic_kernel_derivative_2(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
-    wp.adjoint[r] += adj_ret * custom_grad_scale #  (-custom_grad_scale)
+if use_0_order_grad:
+    print("Using 0-order gradient for cubic_kernel_derivative_custom")
+    @wp.func_grad(cubic_kernel_derivative_custom)
+    def adj_cubic_kernel_derivative_2(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
+        wp.adjoint[r] += adj_ret * custom_grad_scale #  (-custom_grad_scale)
 
 use_replay_kernel = True
-replay_scale = 0.01
+replay_scale = 0.0
+
+# 1. / 13037870 # 162974 # 0.001
+# h=0.025: kernel_vals max: 162974.640625 deriv_vals min: -13037870
+
+def auto_replay_scale_from_h_py(support_radius: float) -> float:
+    h = float(support_radius)
+    return math.pi * h * h * h * h / 16.0
+
+
+@wp.func
+def auto_replay_scale_from_h(support_radius: float):
+    # For cubic kernel derivative in dim=3, max |dW/dr| occurs at q = r/h = 1/3.
+    # Its closed form is: max |dW/dr| = 16 / (pi * h^4), so scale is its reciprocal.
+    h = support_radius
+    return wp.pi * h * h * h * h / 16.0
 
 if use_replay_kernel:
     print("Using replay kernel for cubic_kernel_derivative_custom")
-    # @wp.func_replay(cubic_kernel_derivative_custom)
-    @wp.func
+    @wp.func_replay(cubic_kernel_derivative_custom)
     def replay_cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
         dim = 3
         h = support_radius
@@ -266,4 +284,34 @@ if use_replay_kernel:
             else:
                 factor = 1.0 - q
                 res = k * (-factor * factor) * grad_q
-        return res * replay_scale
+        return res * auto_replay_scale_from_h(h)
+
+
+@wp.func
+def replay_cubic_kernel_derivative_custom_plot(r: wp.vec3, support_radius: float):
+    '''
+    for plot_kernel.py to visualize the replay kernel function curve
+    '''
+    dim = 3
+    h = support_radius
+    # derivative of cubic spline smoothing kernel
+    k = 1.0
+    if dim == 1:
+        k = 4. / 3.
+    elif dim == 2:
+        k = 40. / 7. / wp.pi
+    elif dim == 3:
+        k = 8. / wp.pi
+    k = 6. * k / h ** float(dim)
+    r_norm = wp.length(r)
+    q = r_norm / h
+    res = wp.vec3()
+    if r_norm > 1e-5 and q <= 1.0:
+        grad_q = r / (r_norm * h)
+        if q <= 0.5:
+            res = k * q * (3.0 * q - 2.0) * grad_q
+        else:
+            factor = 1.0 - q
+            res = k * (-factor * factor) * grad_q
+    return res * auto_replay_scale_from_h(h)
+
