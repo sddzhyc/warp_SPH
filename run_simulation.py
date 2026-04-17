@@ -32,7 +32,7 @@ if __name__ == "__main__":
     scene_path = args.scene_file
     config = SimConfig(scene_file_path=scene_path)
     # Robust scene name extraction for Windows/Unix paths
-    scene_name = os.path.splitext(os.path.basename(scene_path))[0] + '_fixed2'
+    scene_name = os.path.splitext(os.path.basename(scene_path))[0] + ''
 
     # export settings
     output_frames = config.get_cfg("exportFrame")

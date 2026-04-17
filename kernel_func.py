@@ -1,6 +1,13 @@
 import math
 import warp as wp
 
+use_0_order_grad = True
+custom_h_scale, custom_grad_scale = 0., 0.0001 # 4.0, 0.1 # 1.0, 0.0001
+
+use_replay_kernel = True
+replay_scale = 0.0
+
+
 @wp.func
 def square(x: float):
     return x * x
@@ -175,8 +182,6 @@ def cubic_kernel_derivative_custom(r: wp.vec3, support_radius: float):
             res = k * (-factor * factor) * grad_q
     return res
 
-use_0_order_grad = True
-custom_h_scale, custom_grad_scale = 0., 0.0001 # 4.0, 0.1 # 1.0, 0.0001
 
 # @wp.func_grad(cubic_kernel_derivative_custom)
 def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
@@ -241,8 +246,6 @@ if use_0_order_grad:
     def adj_cubic_kernel_derivative_2(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):
         wp.adjoint[r] += adj_ret * custom_grad_scale #  (-custom_grad_scale)
 
-use_replay_kernel = True
-replay_scale = 0.0
 
 # 1. / 13037870 # 162974 # 0.001
 # h=0.025: kernel_vals max: 162974.640625 deriv_vals min: -13037870

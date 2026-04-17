@@ -10,6 +10,16 @@ class MaterialType(IntEnum):
     SOLID = 0
     FLUID = 1
 
+
+@wp.func
+def quat_unit_conjugate(q: wp.quat):
+    return wp.quat(-q[0], -q[1], -q[2], q[3])
+
+
+@wp.func
+def quat_relative(q: wp.quat, q0: wp.quat):
+    return wp.normalize(q * quat_unit_conjugate(q0))
+
 @wp.struct
 class MaterialMarks():
     # store material id per particle (int) and dynamic flag (int)
@@ -24,6 +34,7 @@ class RigidBodies():
         rigid_v0: wp.array(dtype=wp.vec3)
         rigid_v: wp.array(dtype=wp.vec3)
         rigid_quaternion: wp.array(dtype=wp.quat)
+        rigid_quaternion0: wp.array(dtype=wp.quat)
         rigid_omega: wp.array(dtype=wp.vec3)
         rigid_omega0: wp.array(dtype=wp.vec3)
         rigid_force: wp.array(dtype=wp.vec3)
@@ -33,6 +44,7 @@ class RigidBodies():
         rigid_inertia0: wp.array(dtype=wp.mat33)
         rigid_inv_inertia: wp.array(dtype=wp.mat33)
         rigid_inv_mass: wp.array(dtype=wp.float32)
+
 @wp.func
 def is_dynamic_rigid_body(mtr: MaterialMarks, idx: int) -> bool:
     return mtr.material[idx] == MaterialType.SOLID and mtr.is_dynamic[idx] == 1
@@ -275,7 +287,8 @@ def solve_rigid_body(
     q = wp.normalize(q)
     bodies_out.rigid_quaternion[tid] = q
 
-    R = wp.quat_to_matrix(q)
+    q_rel = quat_relative(q, bodies.rigid_quaternion0[tid])
+    R = wp.quat_to_matrix(q_rel)
     I0 = bodies.rigid_inertia0[tid]
     I = R @ I0 @ wp.transpose(R)
     bodies_out.rigid_inertia[tid] = I
@@ -291,6 +304,7 @@ def solve_rigid_body_diff(
     rigid_force: wp.array(dtype=wp.vec3),
     rigid_mass: wp.array(dtype=wp.float32),
     rigid_quaternion: wp.array(dtype=wp.quat),
+    rigid_quaternion0: wp.array(dtype=wp.quat),
     rigid_omega: wp.array(dtype=wp.vec3),
     rigid_torque: wp.array(dtype=wp.vec3),
     rigid_inertia0: wp.array(dtype=wp.mat33),
@@ -325,7 +339,8 @@ def solve_rigid_body_diff(
     q_normalized = wp.normalize(q + dt * dq)
     rigid_quaternion_out[tid] = norm_grad_quat(q_normalized)
 
-    R = wp.quat_to_matrix(q_normalized)
+    q_rel = quat_relative(q_normalized, rigid_quaternion0[tid])
+    R = wp.quat_to_matrix(q_rel)
     I0 = rigid_inertia0[tid]
     I = R @ I0 @ wp.transpose(R)
     rigid_inertia_out[tid] = I
@@ -351,7 +366,8 @@ def update_rigid_particle_info(
 
         # rest-space relative position (assumes rest orientation is identity)
         x_rel = particles_x0[tid] - bodies.rigid_rest_cm[r]
-        R = wp.quat_to_matrix(bodies.rigid_quaternion[r])
+        q_rel = quat_relative(bodies.rigid_quaternion[r], bodies.rigid_quaternion0[r])
+        R = wp.quat_to_matrix(q_rel)
         x_rel_world = R @ x_rel
         # position and velocity must use the SAME world-space lever arm to avoid artifacts
         particles_x[tid] = bodies.rigid_x[r] + x_rel_world
@@ -368,6 +384,7 @@ def update_rigid_particle_info_diff(
     rigid_rest_cm: wp.array(dtype=wp.vec3),        
     rigid_x: wp.array(dtype=wp.vec3),
     rigid_quaternion: wp.array(dtype=wp.quat),
+    rigid_quaternion0: wp.array(dtype=wp.quat),
     rigid_v: wp.array(dtype=wp.vec3),
     rigid_omega: wp.array(dtype=wp.vec3),        
 ):
@@ -378,7 +395,8 @@ def update_rigid_particle_info_diff(
 
         # rest-space relative position (assumes rest orientation is identity)
         x_rel = particles_x0[tid] - rigid_rest_cm[r]
-        R = wp.quat_to_matrix(rigid_quaternion[r])
+        q_rel = quat_relative(rigid_quaternion[r], rigid_quaternion0[r])
+        R = wp.quat_to_matrix(q_rel)
         x_rel_world = R @ x_rel
         # position and velocity must use the SAME world-space lever arm to avoid artifacts
         particles_x[tid] = rigid_x[r] + x_rel_world

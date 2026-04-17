@@ -2,6 +2,7 @@ from IISPH_kernel import compute_aii_and_density_deviation, compute_pressure_a a
 from kernel_utils import add_ball_kernel, add_particles_kernel
 
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body, update_rigid_particle_info, compute_rigid_cm_mass_kernel, finalize_rigid_cm_kernel, compute_rigid_inertia_kernel, finalize_rigid_inertia_kernel
+from joint_system import ArticulatedJoints, integrate_rigid_velocity_inplace, integrate_rigid_pose_inplace, solve_articulated_joints_impulse_inplace
 from sim_utils import export_ply_points, load_ply_points
 from sph_kernel import compute_non_presure_forces, compute_pressure, compute_pressure_a
 from sph_kernel_diff import compute_density, enforce_boundary_3D_warp, kick as kick_diff, drift as drift_diff
@@ -14,6 +15,8 @@ import json
 from functools import reduce
 
 HASH_GRID_SIZE_SCALE = 2 # TODO: 注意size过小对前向模拟结果的影响
+
+
 class SimSPH:
     def initialize(self):
         # print(f"Initialized particle volumes m_V0 = {self.m_V0}")
@@ -125,11 +128,17 @@ class SimSPH:
             # All objects id and its particle num
             self.object_collection = dict()
             self.object_id_rigid_body = set()
+            self.scene_rigid_object_ids = []
+            self.num_articulated_joints = 0
+            self.articulated_joints = None
         else:
             self.wave_boundary_enable = False
             self.wave_boundary_amplitude = 0.0
             self.wave_boundary_frequency = 0.0
             self.wave_boundary_phase = 0.0
+            self.scene_rigid_object_ids = []
+            self.num_articulated_joints = 0
+            self.articulated_joints = None
 
         self.time_step = 0.0
         # recompute constants
@@ -187,7 +196,7 @@ class SimSPH:
         wp.copy(self.material_initial, self.materialMarks.material)
         wp.copy(self.is_dynamic_initial, self.materialMarks.is_dynamic)
 
-        if self.num_objects > 0:
+        if self.num_rigid_bodies > 0:
             self.rigid_x_initial = wp.zeros_like(self.rbs.rigid_x)
             self.rigid_v_initial = wp.zeros_like(self.rbs.rigid_v)
             self.rigid_omega_initial = wp.zeros_like(self.rbs.rigid_omega)
@@ -210,7 +219,7 @@ class SimSPH:
 
         self.num_particles_curr = self.num_particles_curr_initial
         
-        if self.num_objects > 0:
+        if self.num_rigid_bodies > 0:
             wp.copy(self.rbs.rigid_x, self.rigid_x_initial)
             wp.copy(self.rbs.rigid_v, self.rigid_v_initial)
             wp.copy(self.rbs.rigid_omega, self.rigid_omega_initial)
@@ -221,6 +230,149 @@ class SimSPH:
             num_dim.append(
                 np.arange(start[i], end[i], self.particle_diameter))
         return reduce(lambda x, y: x * y, [len(n) for n in num_dim])
+
+    def _ensure_scene_object_ids(self, fluid_blocks, rigid_blocks, rigid_bodies):
+        used_ids = set()
+        for obj in fluid_blocks + rigid_blocks + rigid_bodies:
+            if "objectId" in obj:
+                used_ids.add(int(obj["objectId"]))
+
+        next_id = 0
+
+        def alloc_id():
+            nonlocal next_id
+            while next_id in used_ids:
+                next_id += 1
+            allocated = next_id
+            used_ids.add(allocated)
+            next_id += 1
+            return allocated
+
+        for obj in fluid_blocks:
+            if "objectId" not in obj:
+                obj["objectId"] = alloc_id()
+        for obj in rigid_blocks:
+            if "objectId" not in obj:
+                obj["objectId"] = alloc_id()
+        for idx, obj in enumerate(rigid_bodies):
+            if "objectId" not in obj:
+                obj["objectId"] = alloc_id()
+
+    def _quat_xyzw_from_cfg(self, cfg_obj):
+        axis = np.array(cfg_obj.get("rotationAxis", [0.0, 0.0, 1.0]), dtype=np.float32)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm <= 1.0e-8:
+            return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+
+        axis = axis / axis_norm
+        angle = float(cfg_obj.get("rotationAngle", 0.0)) * np.pi / 180.0
+        q_wp = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
+        return np.array([float(q_wp[0]), float(q_wp[1]), float(q_wp[2]), float(q_wp[3])], dtype=np.float32)
+
+    def _build_articulated_joints(self):
+        self.num_articulated_joints = 0
+        self.articulated_joints = None
+
+        if not hasattr(self, "cfg") or self.cfg is None or self.num_objects <= 0:
+            return
+
+        art_systems = self.cfg.get_articulated_systems()
+        if len(art_systems) == 0:
+            return
+
+        rigid_bodies_cfg = self.cfg.get_rigid_bodies()
+        if len(rigid_bodies_cfg) == 0:
+            return
+
+        scene_to_obj = []
+        for i, rb_cfg in enumerate(rigid_bodies_cfg):
+            if "objectId" in rb_cfg:
+                scene_to_obj.append(int(rb_cfg["objectId"]))
+            elif i < len(self.scene_rigid_object_ids):
+                scene_to_obj.append(int(self.scene_rigid_object_ids[i]))
+            else:
+                scene_to_obj.append(i)
+
+        rigid_rest_cm_np = self.rbs.rigid_rest_cm.numpy() if self.num_rigid_bodies > 0 else np.zeros((0, 3), dtype=np.float32)
+
+        parent_ids = []
+        child_ids = []
+        parent_locals = []
+        child_locals = []
+        inv_stiffness_list = []
+
+        for system in art_systems:
+            rigid_indices = system.get("rigidIndices", [])
+            joints_cfg = system.get("joints", [])
+            inv_stiffness = float(system.get("invStiffness", 0.0))
+            for joint_cfg in joints_cfg:
+                local_i1 = int(joint_cfg.get("rigidIndex1", 0))
+                local_i2 = int(joint_cfg.get("rigidIndex2", 1))
+                if local_i1 < 0 or local_i1 >= len(rigid_indices) or local_i2 < 0 or local_i2 >= len(rigid_indices):
+                    continue
+
+                scene_i1 = int(rigid_indices[local_i1])
+                scene_i2 = int(rigid_indices[local_i2])
+                if scene_i1 < 0 or scene_i1 >= len(scene_to_obj) or scene_i2 < 0 or scene_i2 >= len(scene_to_obj):
+                    continue
+
+                obj_id1 = int(scene_to_obj[scene_i1])
+                obj_id2 = int(scene_to_obj[scene_i2])
+                if obj_id1 < 0 or obj_id1 >= self.num_objects or obj_id2 < 0 or obj_id2 >= self.num_objects:
+                    continue
+
+                if "jointPoint" in joint_cfg:
+                    joint_world = np.array(joint_cfg["jointPoint"], dtype=np.float32)
+                elif "jointRelativePosition" in joint_cfg:
+                    rel = np.array(joint_cfg["jointRelativePosition"], dtype=np.float32)
+                    child_cfg = rigid_bodies_cfg[scene_i2]
+                    scale = np.array(child_cfg.get("scale", [1.0, 1.0, 1.0]), dtype=np.float32)
+                    rel_scaled = rel * (scale * 0.5)
+
+                    rot_axis = child_cfg.get("rotationAxis", [0.0, 0.0, 1.0])
+                    rot_angle = child_cfg.get("rotationAngle", 0.0)
+                    axis = np.array(rot_axis, dtype=np.float32)
+                    axis_norm = np.linalg.norm(axis)
+                    if axis_norm < 1.0e-8:
+                        rot = np.eye(3, dtype=np.float32)
+                    else:
+                        axis = axis / axis_norm
+                        angle = float(rot_angle) / 180.0 * np.pi
+                        quat = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
+                        rot_m = wp.quat_to_matrix(quat)
+                        rot = np.array([
+                            [float(rot_m[0, 0]), float(rot_m[0, 1]), float(rot_m[0, 2])],
+                            [float(rot_m[1, 0]), float(rot_m[1, 1]), float(rot_m[1, 2])],
+                            [float(rot_m[2, 0]), float(rot_m[2, 1]), float(rot_m[2, 2])],
+                        ], dtype=np.float32)
+                    rel_rot = rot @ rel_scaled
+
+                    translation = np.array(child_cfg.get("translation", [0.0, 0.0, 0.0]), dtype=np.float32)
+                    joint_world = rel_rot + translation
+                else:
+                    continue
+
+                if obj_id1 >= rigid_rest_cm_np.shape[0] or obj_id2 >= rigid_rest_cm_np.shape[0]:
+                    continue
+
+                parent_ids.append(obj_id1)
+                child_ids.append(obj_id2)
+                parent_locals.append(joint_world - rigid_rest_cm_np[obj_id1])
+                child_locals.append(joint_world - rigid_rest_cm_np[obj_id2])
+                inv_stiffness_list.append(inv_stiffness)
+
+        self.num_articulated_joints = len(parent_ids)
+        if self.num_articulated_joints == 0:
+            return
+
+        self.articulated_joints = ArticulatedJoints()
+        self.articulated_joints.parent_index = wp.array(np.array(parent_ids, dtype=np.int32), dtype=wp.int32)
+        self.articulated_joints.child_index = wp.array(np.array(child_ids, dtype=np.int32), dtype=wp.int32)
+        self.articulated_joints.parent_local = wp.array(np.array(parent_locals, dtype=np.float32), dtype=wp.vec3)
+        self.articulated_joints.child_local = wp.array(np.array(child_locals, dtype=np.float32), dtype=wp.vec3)
+        self.articulated_joints.inv_stiffness = wp.array(np.array(inv_stiffness_list, dtype=np.float32), dtype=wp.float32)
+
+        print(f"Initialized articulated joints: {self.num_articulated_joints}")
 
     def load_rigid_body(self, rigid_body):
         obj_id = rigid_body["objectId"]
@@ -249,7 +401,7 @@ class SimSPH:
             sampled_points, _ = tm.sample.sample_surface(mesh, target_count)
         return sampled_points.astype(np.float32)
 
-    def load_points_from_ply_config(self, obj_cfg):
+    def load_points_and_attrs_from_ply_config(self, obj_cfg):
         ply_file = obj_cfg.get("plyFile")
         if ply_file is None:
             raise ValueError("plyFile is not provided in object config")
@@ -257,7 +409,7 @@ class SimSPH:
         if not os.path.isabs(ply_file):
             ply_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ply_file)
 
-        pos, _ = load_ply_points(ply_file)
+        pos, attrs = load_ply_points(ply_file)
         points = np.array(pos, dtype=np.float32)
 
         # if "scale" in obj_cfg:
@@ -276,6 +428,11 @@ class SimSPH:
         #     translation = np.array(obj_cfg["translation"], dtype=np.float32)
         #     points = points + translation
 
+        attrs_np = {k: np.array(v) for k, v in attrs.items()}
+        return points, attrs_np
+
+    def load_points_from_ply_config(self, obj_cfg):
+        points, _ = self.load_points_and_attrs_from_ply_config(obj_cfg)
         return points
 
     def add_points(self, object_id, points_np, velocity, density, is_dynamic, color, material):
@@ -297,6 +454,74 @@ class SimSPH:
 
         wp_density_arr = wp.full(shape=num_new_particles, value=density, dtype=float)
         wp_material_arr = wp.full(shape=num_new_particles, value=material, dtype=int)
+        wp_is_dynamic_arr = wp.full(shape=num_new_particles, value=int(is_dynamic), dtype=int)
+        wp_color_arr = wp.full(
+            shape=num_new_particles,
+            value=wp.vec3i(int(color[0]), int(color[1]), int(color[2])),
+            dtype=wp.vec3i,
+        )
+
+        wp.launch(
+            kernel=add_particles_kernel,
+            dim=num_new_particles,
+            inputs=[
+                start,
+                self.x,
+                self.x_0,
+                self.v,
+                self.rho,
+                self.materialMarks.material,
+                self.materialMarks.is_dynamic,
+                self.object_id,
+                self.m_V,
+                self.color,
+                wp_new_positions,
+                wp_velocity_arr,
+                wp_density_arr,
+                wp_material_arr,
+                wp_is_dynamic_arr,
+                object_id,
+                self.m_V0,
+                wp_color_arr,
+            ],
+        )
+
+        self.num_particles_curr += num_new_particles
+
+    def add_points_with_attrs(self, object_id, points_np, attrs, default_velocity, default_density, is_dynamic, color, default_material):
+        num_new_particles = int(points_np.shape[0])
+        start = self.num_particles_curr
+        end = start + num_new_particles
+        if end > self.particle_max_num:
+            raise RuntimeError(f"Particle overflow: {end} > {self.particle_max_num}")
+
+        wp_new_positions = wp.array(np.array(points_np, dtype=np.float32), dtype=wp.vec3)
+
+        if all(k in attrs for k in ("vx", "vy", "vz")):
+            vel_np = np.stack([attrs["vx"], attrs["vy"], attrs["vz"]], axis=1).astype(np.float32)
+            if vel_np.shape[0] != num_new_particles:
+                raise ValueError("PLY velocity attribute length does not match particle count")
+        else:
+            v = np.array(default_velocity if default_velocity is not None else [0.0, 0.0, 0.0], dtype=np.float32)
+            vel_np = np.tile(v[None, :], (num_new_particles, 1))
+        wp_velocity_arr = wp.array(vel_np, dtype=wp.vec3)
+
+        if "rho" in attrs:
+            density_np = np.array(attrs["rho"], dtype=np.float32)
+            if density_np.shape[0] != num_new_particles:
+                raise ValueError("PLY rho attribute length does not match particle count")
+        else:
+            density_np = np.full(num_new_particles, float(default_density), dtype=np.float32)
+        wp_density_arr = wp.array(density_np, dtype=float)
+
+        if "material" in attrs:
+            material_np = np.array(attrs["material"], dtype=np.int32)
+            if material_np.shape[0] != num_new_particles:
+                raise ValueError("PLY material attribute length does not match particle count")
+        else:
+            material_np = np.full(num_new_particles, int(default_material), dtype=np.int32)
+        wp_material_arr = wp.array(material_np, dtype=int)
+
         wp_is_dynamic_arr = wp.full(shape=num_new_particles, value=int(is_dynamic), dtype=int)
         wp_color_arr = wp.full(
             shape=num_new_particles,
@@ -578,11 +803,23 @@ class SimSPH:
         self.rbs.rigid_torque = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
         self.rbs.rigid_v0 = wp.zeros(self.num_objects, dtype=wp.vec3)
         self.rbs.rigid_omega0 = wp.zeros(self.num_objects, dtype=wp.vec3)
+        self.rbs.rigid_quaternion0 = wp.zeros(self.num_objects, dtype=wp.quat)
         
-        # Quaternion Identity
+        # Quaternion initialization from config rotation (fallback identity)
         q_np = np.zeros((self.num_objects, 4), dtype=np.float32)
         q_np[:, 3] = 1.0
+        if rigid_cfg is not None and rigid_obj_id < self.num_objects:
+            rot_axis = rigid_cfg.get("rotationAxis", [0.0, 0.0, 1.0])
+            rot_angle = rigid_cfg.get("rotationAngle", 0.0)
+            axis = np.array(rot_axis, dtype=np.float32)
+            axis_norm = np.linalg.norm(axis)
+            if axis_norm > 1.0e-8:
+                axis = axis / axis_norm
+                angle = float(rot_angle) * np.pi / 180.0
+                q_wp = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
+                q_np[rigid_obj_id] = np.array([q_wp[0], q_wp[1], q_wp[2], q_wp[3]], dtype=np.float32)
         self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat, requires_grad=True)
+        self.rbs.rigid_quaternion0 = wp.array(q_np, dtype=wp.quat)
 
         # Initialize rigid-body initial linear/angular velocity from config
         if rigid_obj_id < self.num_objects:
@@ -627,6 +864,7 @@ class SimSPH:
         
         # Set Rigid X to CM
         wp.copy(self.rbs.rigid_x, self.rbs.rigid_rest_cm)
+
         
         # Initialize rigid velocity from particle velocity average?
         # For now assume 0 or infer?
@@ -673,11 +911,17 @@ class SimSPH:
         #========== Compute number of particles ==========#
         #### Process Fluid Blocks ####
         fluid_blocks = cfg.get_fluid_blocks()
+        rigid_blocks = cfg.get_rigid_blocks()
+        rigid_bodies = cfg.get_rigid_bodies()
+        self._ensure_scene_object_ids(fluid_blocks, rigid_blocks, rigid_bodies)
+        self.scene_rigid_object_ids = [int(rb["objectId"]) for rb in rigid_bodies]
+
         fluid_particle_num = 0
         for fluid in fluid_blocks:
             if "plyFile" in fluid and fluid["plyFile"]:
-                particle_points_np = self.load_points_from_ply_config(fluid)
+                particle_points_np, particle_attrs = self.load_points_and_attrs_from_ply_config(fluid)
                 fluid["particlePoints"] = particle_points_np
+                fluid["particleAttrs"] = particle_attrs
                 particle_num = particle_points_np.shape[0]
             else:
                 particle_num = self.compute_cube_particle_num(fluid["start"], fluid["end"])
@@ -686,7 +930,6 @@ class SimSPH:
             fluid_particle_num += particle_num
 
         #### Process Rigid Blocks ####
-        rigid_blocks = cfg.get_rigid_blocks()
         rigid_particle_num = 0
         for rigid in rigid_blocks:
             if "plyFile" in rigid and rigid["plyFile"]:
@@ -700,7 +943,6 @@ class SimSPH:
             rigid_particle_num += particle_num
         
         #### Process Rigid Bodies ####
-        rigid_bodies = cfg.get_rigid_bodies()
         for rigid_body in rigid_bodies:
             if "plyFile" in rigid_body and rigid_body["plyFile"]:
                 particle_points_np = self.load_points_from_ply_config(rigid_body)
@@ -740,6 +982,10 @@ class SimSPH:
             self.np_rigid_v = np.zeros((self.num_objects, self.dim), dtype=np.float32)
             self.np_rigid_omega = np.zeros((self.num_objects, 3), dtype=np.float32)
             self.np_rigid_omega0 = np.zeros((self.num_objects, 3), dtype=np.float32)
+            self.np_rigid_quaternion = np.zeros((self.num_objects, 4), dtype=np.float32)
+            self.np_rigid_quaternion[:, 3] = 1.0
+            self.np_rigid_quaternion0 = np.zeros((self.num_objects, 4), dtype=np.float32)
+            self.np_rigid_quaternion0[:, 3] = 1.0
 
 
         # Particle related properties
@@ -768,20 +1014,32 @@ class SimSPH:
         # Fluid block
         for fluid in fluid_blocks:
             obj_id = fluid["objectId"]
-            velocity = fluid["velocity"]
-            density = fluid["density"]
+            velocity = fluid.get("velocity", [0.0, 0.0, 0.0])
+            density = fluid.get("density", self.base_density)
             self.base_density = density # record for later use in emitted particles
             color = fluid.get("color", [255, 255, 255])
             if "particlePoints" in fluid:
-                self.add_points(
-                    object_id=obj_id,
-                    points_np=fluid["particlePoints"],
-                    velocity=velocity,
-                    density=density,
-                    is_dynamic=1,
-                    color=color,
-                    material=1,
-                )
+                if "particleAttrs" in fluid:
+                    self.add_points_with_attrs(
+                        object_id=obj_id,
+                        points_np=fluid["particlePoints"],
+                        attrs=fluid["particleAttrs"],
+                        default_velocity=velocity,
+                        default_density=density,
+                        is_dynamic=1,
+                        color=color,
+                        default_material=1,
+                    )
+                else:
+                    self.add_points(
+                        object_id=obj_id,
+                        points_np=fluid["particlePoints"],
+                        velocity=velocity,
+                        density=density,
+                        is_dynamic=1,
+                        color=color,
+                        material=1,
+                    )
             else:
                 offset = np.array(fluid["translation"])
                 start = np.array(fluid["start"]) + offset
@@ -796,7 +1054,6 @@ class SimSPH:
                               color=color,
                               material=1) # 1 indicates fluid
         
-        # TODO: Handle rigid block
         # Rigid block
         for rigid in rigid_blocks:
             obj_id = rigid["objectId"]
@@ -809,6 +1066,9 @@ class SimSPH:
             self.np_rigid_v0[obj_id] = velocity
             self.np_rigid_omega[obj_id] = angular_velocity
             self.np_rigid_omega0[obj_id] = angular_velocity
+            q_xyzw = self._quat_xyzw_from_cfg(rigid)
+            self.np_rigid_quaternion[obj_id] = q_xyzw
+            self.np_rigid_quaternion0[obj_id] = q_xyzw
             if "particlePoints" in rigid:
                 self.add_points(
                     object_id=obj_id,
@@ -855,6 +1115,9 @@ class SimSPH:
             self.np_rigid_v0[obj_id] = velocity
             self.np_rigid_omega[obj_id] = angular_velocity
             self.np_rigid_omega0[obj_id] = angular_velocity
+            q_xyzw = self._quat_xyzw_from_cfg(rigid_body)
+            self.np_rigid_quaternion[obj_id] = q_xyzw
+            self.np_rigid_quaternion0[obj_id] = q_xyzw
             
             start = self.num_particles_curr
             end = start + num_particles_obj
@@ -906,11 +1169,8 @@ class SimSPH:
             self.rbs.rigid_torque = wp.zeros(self.num_objects, dtype=wp.vec3, requires_grad=True)
             self.rbs.rigid_omega = wp.array(self.np_rigid_omega, dtype=wp.vec3, requires_grad=True)
             self.rbs.rigid_omega0 = wp.array(self.np_rigid_omega0, dtype=wp.vec3)
-            
-            # Quaternion initialization (identity = 0,0,0,1 in x,y,z,w)
-            q_np = np.zeros((self.num_objects, 4), dtype=np.float32)
-            q_np[:, 3] = 1.0 
-            self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+            self.rbs.rigid_quaternion = wp.array(self.np_rigid_quaternion, dtype=wp.quat)
+            self.rbs.rigid_quaternion0 = wp.array(self.np_rigid_quaternion0, dtype=wp.quat)
             
             self.rbs.rigid_mass = wp.zeros(self.num_objects, dtype=float)
             self.rbs.rigid_inv_mass = wp.zeros(self.num_objects, dtype=float)
@@ -983,6 +1243,8 @@ class SimSPH:
                 ]
             )
 
+        self._build_articulated_joints()
+
         # self.object_id = wp.zeros(self.particle_max_num, dtype=wp.int32)
         print(f"n: {self.particle_max_num}, x shape: {self.x.shape}")
         self.print_rigid_info()  
@@ -1018,6 +1280,8 @@ class SimSPH:
             self.num_particles_curr = self.particle_max_num
             self.num_rigid_bodies = int(self.ps.num_rigid_bodies)
             self.num_objects = int(self.ps.num_objects)
+            rigid_cfg = self.cfg.get_rigid_bodies() if hasattr(self, "cfg") and self.cfg is not None else []
+            self.scene_rigid_object_ids = [int(rb.get("objectId", i)) for i, rb in enumerate(rigid_cfg)]
             print(f"Current particle num: {self.particle_max_num}, Particle max num: {self.particle_max_num}")
             # map Taichi fields into Warp RigidBodies arrays
             self.rbs = RigidBodies()
@@ -1038,6 +1302,7 @@ class SimSPH:
                     q_np = q_np.reshape(1, 4)
                 q_np = q_np[:, [1, 2, 3, 0]].copy()
                 self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+                self.rbs.rigid_quaternion0 = wp.array(q_np, dtype=wp.quat)
                 # scalar masses
                 self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
                 self.rbs.rigid_inv_mass = wp.array(self.ps.rigid_inv_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
@@ -1070,6 +1335,8 @@ class SimSPH:
 
             self.m_V = wp.array(self.ps.m_V.to_numpy()[: self.particle_max_num].astype(np.float32), dtype=wp.float32)
 
+            self._build_articulated_joints()
+
     def init_from_ply(self, ply_path):
         print(f"Loading initial state from {ply_path}")
         pos, attrs = load_ply_points(ply_path)
@@ -1084,6 +1351,8 @@ class SimSPH:
             # self.particle_max_num = int(self.ps.particle_max_num) # Don't overwrite this from PS, use PLY count
             self.num_rigid_bodies = int(self.ps.num_rigid_bodies)
             self.num_objects = int(self.ps.num_objects)
+            rigid_cfg = self.cfg.get_rigid_bodies() if hasattr(self, "cfg") and self.cfg is not None else []
+            self.scene_rigid_object_ids = [int(rb.get("objectId", i)) for i, rb in enumerate(rigid_cfg)]
             
             self.rbs = RigidBodies()
             if self.num_rigid_bodies > 0:
@@ -1101,6 +1370,7 @@ class SimSPH:
                     q_np = q_np.reshape(1, 4)
                 q_np = q_np[:, [1, 2, 3, 0]].copy()
                 self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
+                self.rbs.rigid_quaternion0 = wp.array(q_np, dtype=wp.quat)
                 
                 self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
                 self.rbs.rigid_inv_mass = wp.array(self.ps.rigid_inv_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
@@ -1163,6 +1433,8 @@ class SimSPH:
             self.materialMarks.is_dynamic = wp.zeros(self.particle_max_num, dtype=wp.int32)
             
         self.x_0 = wp.array(pos, dtype=wp.vec3)
+
+        self._build_articulated_joints()
 
         
         print("Initialization from PLY complete.")
@@ -1305,26 +1577,27 @@ class SimSPH:
         lower_bound = np.array(self.domain_start, dtype=np.float32)
         upper_bound = np.array(self.domain_end, dtype=np.float32)
         lower_x_wall_velocity = 0.0
+        upper_x_wall_velocity = 0.0
 
         if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
             omega = 2.0 * np.pi * self.wave_boundary_frequency
-            # Shift in [0, A], so boundary never moves outside the original domain.
-            shift = 0.5 * self.wave_boundary_amplitude * (
-                1.0 + np.sin(omega * self.sim_time + self.wave_boundary_phase)
-            )
-            shift = min(shift, 0.2 * float(self.domain_end[0] - self.domain_start[0]))
+            # Oscillate around the original x-boundary (domainStart[0]) as the center.
+            theta = omega * self.sim_time + self.wave_boundary_phase
+            shift = self.wave_boundary_amplitude * np.sin(theta)
+            max_shift = 0.2 * float(self.domain_end[0] - self.domain_start[0])
+            shift = max(-max_shift, min(shift, max_shift))
             lower_bound[0] = float(self.domain_start[0] + shift)
-            lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.cos(
-                omega * self.sim_time + self.wave_boundary_phase
-            )
+            upper_bound[0] = float(self.domain_end[0] + shift)
+            lower_x_wall_velocity = self.wave_boundary_amplitude * omega * np.cos(theta)
+            upper_x_wall_velocity = lower_x_wall_velocity
 
-        return lower_bound, upper_bound, float(lower_x_wall_velocity)
+        return lower_bound, upper_bound, float(lower_x_wall_velocity), float(upper_x_wall_velocity)
 
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step", active=self.verbose):
             for _ in range(self.sim_step_to_frame_ratio):
-                lower_bound, upper_bound, lower_x_wall_velocity = self._get_wave_boundary_state()
+                lower_bound, upper_bound, lower_x_wall_velocity, upper_x_wall_velocity = self._get_wave_boundary_state()
 
                 with wp.ScopedTimer("grid build", active=self.verbose):
                     # build grid
@@ -1348,27 +1621,73 @@ class SimSPH:
                                 wp.vec3(*upper_bound),
                                 self.padding,
                                 lower_x_wall_velocity,
+                                upper_x_wall_velocity,
                         ]
                     )
 
                     self.sub_step()
                     g = wp.vec3(0.0, self.gravity, 0.0)
 
-                    wp.launch(
-                        kernel=solve_rigid_body,
-                        dim=self.num_objects,
-                        inputs=[self.rbs, g, self.dt, self.rbs]
-                    )
-                    # wp.launch(kernel=solve_rigid_body, dim=self.num_rigid_bodies, inputs=[self.rbs, g, self.dt]) # 该实现有问题
-                    wp.launch(
-                        kernel=update_rigid_particle_info,
-                        dim=self.particle_max_num,
-                        inputs=[self.x, self.v, self.x_0,
-                            self.object_id,
-                            self.materialMarks,
-                            self.rbs,
-                        ]
-                    )
+                    if self.num_rigid_bodies > 0:
+                        wp.launch(
+                            kernel=integrate_rigid_velocity_inplace,
+                            dim=self.num_objects,
+                            inputs=[self.rbs, g, self.dt]
+                        )
+                        if self.num_articulated_joints > 0 and self.articulated_joints is not None:
+                            wp.launch(
+                                kernel=solve_articulated_joints_impulse_inplace,
+                                dim=self.num_articulated_joints,
+                                inputs=[
+                                    self.rbs.rigid_x,
+                                    self.rbs.rigid_quaternion,
+                                    self.rbs.rigid_quaternion0,
+                                    self.rbs.rigid_inv_mass,
+                                    self.rbs.rigid_inv_inertia,
+                                    self.articulated_joints,
+                                    self.num_objects,
+                                    self.num_articulated_joints,
+                                    self.dt,
+                                ],
+                                outputs=[
+                                    self.rbs.rigid_v,
+                                    self.rbs.rigid_omega,
+                                ],
+                            )
+                        wp.launch(
+                            kernel=integrate_rigid_pose_inplace,
+                            dim=self.num_objects,
+                            inputs=[
+                                self.rbs.rigid_x,
+                                self.rbs.rigid_v,
+                                self.rbs.rigid_force,
+                                self.rbs.rigid_quaternion,
+                                self.rbs.rigid_quaternion0,
+                                self.rbs.rigid_omega,
+                                self.rbs.rigid_torque,
+                                self.rbs.rigid_inertia0,
+                                self.dt,
+                            ],
+                            outputs=[
+                                self.rbs.rigid_x,
+                                self.rbs.rigid_v,
+                                self.rbs.rigid_force,
+                                self.rbs.rigid_quaternion,
+                                self.rbs.rigid_omega,
+                                self.rbs.rigid_torque,
+                                self.rbs.rigid_inertia,
+                                self.rbs.rigid_inv_inertia,
+                            ],
+                        )
+                        wp.launch(
+                            kernel=update_rigid_particle_info,
+                            dim=self.particle_max_num,
+                            inputs=[self.x, self.v, self.x_0,
+                                self.object_id,
+                                self.materialMarks,
+                                self.rbs,
+                            ]
+                        )
 
             self.sim_time += self.frame_dt
 

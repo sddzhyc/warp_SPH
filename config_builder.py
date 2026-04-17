@@ -43,3 +43,9 @@ class SimConfig:
             return self.config["FluidBlocks"]
         else:
             return []
+
+    def get_articulated_systems(self):
+        if "ArticulatedSystems" in self.config:
+            return self.config["ArticulatedSystems"]
+        else:
+            return []
