@@ -235,3 +235,5 @@ Balance/
 ref/
 figures/
 outputs/
+grid_search_results/
+*_ref/
