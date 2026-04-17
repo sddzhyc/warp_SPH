@@ -60,7 +60,6 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
         print(f"ReduceLROnPlateau enabled: initial lr = {sim.optimizer.lr}")
 
     grad_buffer = []
-    last_loss_scalar = None
 
     for i in range(args.iters):
         print(f"------------Starting training for {i}/{args.iters} iterations------------")
@@ -69,7 +68,6 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
         loss_val = sim.loss.numpy()
         last_loss_scalar = float(np.asarray(loss_val).reshape(-1)[0])
         print(f"Iteration {i}: Loss = {loss_val}")
-
         # 检查loss为nan时提前终止
         if np.isnan(last_loss_scalar):
             print(f"[Train] Early stopping: Loss is NaN at iter {i}, aborting training.")
@@ -81,7 +79,7 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
         if state_info:
             print(f"Loss State Info: {state_info}")
 
-        if sim.num_objects > 0:
+        if sim.num_rigid_bodies > 0:
             print(f"[grad] opt_var grad:\n", [v.grad.numpy() for v in sim.opt_var])
             print(f"[grad] sim.rigid_v_arrays[0] grad:\n", sim.rigid_v_arrays[0].grad.numpy())
 
@@ -262,23 +260,25 @@ if __name__ == "__main__":
     if args.init_id is not None:
         scene_name += f"init{args.init_id}/"
     scene_name += f"hg{HASH_GRID_SIZE_SCALE}/"
+    grad_mode_info = ""
     if use_difffr:
-        scene_name += "difffr/"
+        grad_mode_info += "difffr/"
     if use_custom_grad:
         if use_0_order_grad:
-            scene_name += f"g2_custom_const{custom_grad_scale}/"
+            grad_mode_info += f"g2_custom_const{custom_grad_scale}/"
         else:
-            scene_name += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
+            grad_mode_info += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
         if use_replay_kernel:
-            scene_name += f"replay_{kf.replay_scale}/"
+            grad_mode_info += f"replay_{kf.replay_scale:.2f}/"
     else:
-        scene_name += "g2/"
+        grad_mode_info += "g2/"
     if args.avg_grad:
-        scene_name += "grad_win{}".format(args.grad_win)
+        grad_mode_info += "grad_win{}".format(args.grad_win)
     if args.norm_grad:
-        scene_name += "_normed"
+        grad_mode_info += "_normed"
     # if args.method == 1:
     #     scene_name += "_dfsph"
+    scene_name_with_grad_mode = f"{scene_name}{grad_mode_info}"
 
     # export settings
     output_frames = config.get_cfg("exportFrame")
@@ -301,11 +301,11 @@ if __name__ == "__main__":
     output_ply = config.get_cfg("exportPly")
     output_obj = config.get_cfg("exportObj")
     # Use zero-padded frame index in filename
-    series_prefix = f"outputs/{scene_name}_diff_output/particle_object_{{:06d}}.ply"
+    series_prefix = f"outputs/{scene_name_with_grad_mode}_diff_output/particle_object_{{:06d}}.ply"
     if output_frames:
-        os.makedirs(f"outputs/{scene_name}_output_img", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name_with_grad_mode}_output_img", exist_ok=True)
     if output_ply:
-        os.makedirs(f"outputs/{scene_name}_diff_output", exist_ok=True)
+        os.makedirs(f"outputs/{scene_name_with_grad_mode}_diff_output", exist_ok=True)
 
     # os.makedirs(f"{scene_name}_output", exist_ok=True)
     simulation_method = config.get_cfg("simulationMethod")
@@ -349,11 +349,11 @@ if __name__ == "__main__":
             
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             if args.grid_search:
-                log_dir = f"runs/grid_search/{scene_name}/vx{args.vx_min}-{args.vx_max}_vy{args.vy_min}-{args.vy_max}/{time_str}"
+                log_dir = f"runs/grid_search/{scene_name_with_grad_mode}/vx{args.vx_min}-{args.vx_max}_vy{args.vy_min}-{args.vy_max}/{time_str}"
             elif args.grid_search_vy:
-                log_dir = f"runs/grid_search/{scene_name}/vy{args.vy_min}-{args.vy_max}/{time_str}"
+                log_dir = f"runs/grid_search/{scene_name_with_grad_mode}/vy{args.vy_min}-{args.vy_max}/{time_str}"
             elif args.grid_search_vx:
-                log_dir = f"runs/grid_search/{scene_name}/vx{args.vx_min}-{args.vx_max}/{time_str}"
+                log_dir = f"runs/grid_search/{scene_name_with_grad_mode}/vx{args.vx_min}-{args.vx_max}/{time_str}"
             writer = tensorboardX.SummaryWriter(log_dir=log_dir)
             print(f"Grid search logging to {log_dir}")
             
@@ -420,7 +420,7 @@ if __name__ == "__main__":
                         print(f"------------ Grid Search {sample_idx + 1}/{total_samples}: {search_axis} = {axis_value:.4f} ------------")
 
                     if args.train:
-                        sample_train_log_dir = f"runs/{scene_name}/vx_{vx_value:.2f}_vy_{vy_value:.2f}/{time_str}"
+                        sample_train_log_dir = f"runs/{scene_name}/vx_{vx_value:.2f}_vy_{vy_value:.2f}/{grad_mode_info}/{time_str}"
                     
                         loss_val = run_training(sim, args, log_dir=sample_train_log_dir, enable_writer=True)
                         if loss_val is None:
@@ -488,7 +488,7 @@ if __name__ == "__main__":
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             log_vx = sim.task.opt_rigid_v.numpy()[0][0] if hasattr(sim.task, 'opt_rigid_v') else None
             log_vy = sim.task.opt_rigid_v.numpy()[0][1] if hasattr(sim.task, 'opt_rigid_v') else None
-            log_dir = f"runs/{scene_name}/vx_{log_vx}_vy_{log_vy}/{time_str}_lr_{args.lr}"
+            log_dir = f"runs/{scene_name}/vx_{log_vx:.3f}_vy_{log_vy:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
 
             sim.reset()  # Ensure we start from the initial state before training
             last_loss = run_training(sim, args, log_dir=log_dir, enable_writer=True)
@@ -510,7 +510,7 @@ if __name__ == "__main__":
                         sim.export_ply_from_diff(series_prefix, time_step, cnt_ply)
                     if output_obj:
                         for r_body_id in container.object_id_rigid_body:
-                            with open(f"{scene_name}_output/obj_{r_body_id}_{time_step:06}.obj", "w") as f:
+                            with open(f"{scene_name_with_grad_mode}_output/obj_{r_body_id}_{time_step:06}.obj", "w") as f:
                                 e = container.object_collection[r_body_id]["mesh"].export(file_type='obj')
                                 f.write(e)
                     cnt_ply += 1

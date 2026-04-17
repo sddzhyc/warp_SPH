@@ -8,7 +8,7 @@
 		"density0": 1000, 
 		"simulationMethod": 1,
 		"gravitation": [0.0, -9.81, 0.0],
-		"timeStepSize": 0.00016,
+		"timeStepSize": 0.0016,
 		"stiffness": 50000,
 		"exponent": 7,
 		"boundaryHandlingMethod": 0,
@@ -47,6 +47,9 @@
 
 		"velocity": [10, -5, 0.0],
 		"angularVelocity": [0, 0, 0],
+
+		"velocity_6": [18.706224  , -1.3033642 , -0.06581843],
+		"angularVelocity_6": [0.0987245 , -0.30127525, -0.09872418],
 
 		"velocity_5": [20, 0, 0.0],
 		"angularVelocity_5": [0, 0, 0],

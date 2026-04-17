@@ -1,0 +1,98 @@
+{
+	"Configuration": 
+	{
+		"fps" : 30,
+		"domainStart": [-2.1, 0, -0.83],
+		"domainEnd": [2.1, 4.0, 0.83],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 0,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.0016,
+		"stiffness": 7000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.026, 
+		"radius":  0.025,
+		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
+		"waveBoundaryEnable": false,
+		"waveBoundaryAmplitude": 0.20,
+		"waveBoundaryFrequency": 1.0,
+		"waveBoundaryPhase": 0.0,
+		"targetTimeSteps": 1000,
+		"end_time":0.5
+	},
+
+	"FluidBlocks": [
+	{
+		"objectId": 0,
+		"plyFile": "data/ply/carpole_on_water_fluid.ply",
+		"start": [-2, 0.1, -0.7],
+		"end": [2, 1.5, 0.7],
+		"translation": [0, 0.0, 0.0],
+		"scale": [1,1,1],
+		"velocity": [0.0, 0.0, 0.0],
+		"density": 1000.0,
+		"color": [50, 100, 200],
+		"viscosity" : 0.01
+	}],
+	"RigidBodies": [
+		{
+			"comment": "pole",
+			"geometryFile": "./data/models/UnitBox.obj",
+			"density":50,
+			"translation": [0, 1.8, 0],
+			"rotationAxis": [0, 0, 1],
+			"rotationAngle": 180,
+			"scale": [0.05, 0.5, 0.1],
+			"velocity": [0.0, 0.0, 0.0],
+			"angularVelocity": [0.0, 0.0, 0.0],
+			"color": [0.1, 0.4, 0.6, 1.0], 
+			"isDynamic": true,
+			"isWall": false,
+			"mapInvert": false, 
+			"mapThickness": 0.0,
+			"mapResolution": [30,30,20],
+			"targetX":[0, 1.65, 0], 
+			"targetAngleInDegree": [0, 0, 180],
+			"showTargetMode": 5,
+			"targetScale": [1.0, 1.0, 1.0]
+			},
+		{
+			"comment": "car",
+			"geometryFile": "./data/models/UnitBox.obj",
+			"density":1500,
+			"translation": [0, 1.3, 0],
+			"rotationAxis": [1, 0, 0],
+			"rotationAngle": 0,
+			"scale": [0.9, 0.3, 0.6],
+			"velocity": [0.0, 0.0, 0.0],
+			"angularVelocity": [0.0, 0.0, 0.0],
+			"color": [0.1, 0.4, 0.6, 1.0], 
+			"isDynamic": true,
+			"isWall": false,
+			"mapInvert": false, 
+			"mapThickness": 0.0,
+			"mapResolution": [30,30,20],
+			"targetX":[0, 1.1, 0] 
+		}
+	],
+	"ArticulatedSystems": [
+		{
+			"rigidIndices" : [0, 1],
+			"invStiffness" : 0.0,
+			"joints":[
+				{
+					"rigidIndex1" : 0,
+					"rigidIndex2" : 1,
+					"jointRelativePosition" : [0, 0.9, 0.0]
+				}
+			]
+		}
+	]
+}

@@ -1,0 +1,56 @@
+{
+	"Configuration": 
+	{
+		"fps" : 30,
+		"domainStart": [-2.1, 0, -0.53],
+		"domainEnd": [2.1, 4.0, 0.53],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 0,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.0016,
+		"stiffness": 7000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.026, 
+		"radius":  0.025,
+		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
+		"waveBoundaryEnable": true,
+		"waveBoundaryAmplitude": 0.20,
+		"waveBoundaryFrequency": 1.20,
+		"waveBoundaryPhase": 0.0,
+		"targetTimeSteps": 3000
+	},
+	
+	"FluidBlocks": [
+	{
+		"objectId": 0,
+		"plyFile_old": "./skip_stones/fluid.ply",
+		"start": [-2, 0.1, -0.5],
+		"end": [2, 2.0, 0.5],
+		"translation": [0, 0.0, 0.0],
+		"scale": [1,1,1],
+		"velocity": [0.0, 0.0, 0.0],
+		"density": 1000.0,
+		"color": [50, 100, 200],
+		"viscosity" : 0.01
+	}],
+	"RigidBodies": [],
+	"RigidBodies_old": [
+		{
+			"objectId": 1,
+			"geometryFile": "./data/models/UnitBox.obj",
+			"translation": [-1.6, 2.52, 0.0],
+			"scale": [0.22, 0.10, 0.22],
+			"velocity": [0.0, 0.0, 0.0],
+			"density": 700.0,
+			"color": [245, 220, 120],
+			"isDynamic": true
+		}
+	]
+}
