@@ -25,7 +25,7 @@
 		"waveBoundaryFrequency": 1.0,
 		"waveBoundaryPhase": 0.0,
 		"targetTimeSteps": 1000,
-		"end_time":0.5
+		"end_time": 0.9
 	},
 
 	"FluidBlocks": [

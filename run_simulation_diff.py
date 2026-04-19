@@ -31,6 +31,40 @@ def compute_temporal_avg_grad(grad_buffer, current_grad, window_size):
         grad_buffer.pop(0)
     return np.mean(np.array(grad_buffer), axis=0)
 
+
+def _safe_get_rigid_grad(array_list, step, rigid_id):
+    if array_list is None or step < 0 or step >= len(array_list):
+        return None
+    arr = array_list[step]
+    if arr is None or arr.grad is None:
+        return None
+    grad_data = arr.grad.numpy()
+    if rigid_id < 0 or rigid_id >= len(grad_data):
+        return None
+    return np.asarray(grad_data[rigid_id], dtype=np.float32)
+
+
+def _log_vec3_grad(writer, tag_prefix, grad_vec, step):
+    writer.add_scalar(f"{tag_prefix}/x", float(grad_vec[0]), step)
+    writer.add_scalar(f"{tag_prefix}/y", float(grad_vec[1]), step)
+    writer.add_scalar(f"{tag_prefix}/z", float(grad_vec[2]), step)
+
+
+def _resolve_rigid_log_targets(sim):
+    task = getattr(sim, "task", None)
+    if task is not None and task.__class__.__name__ == "CarPoleOnWaterTask":
+        rod_id = int(getattr(task, "rod_rigid_id", -1))
+        car_id = int(getattr(task, "car_rigid_id", -1))
+        targets = []
+        if car_id >= 0:
+            targets.append(("Car", car_id))
+        if rod_id >= 0:
+            targets.append(("Rod", rod_id))
+        if targets:
+            return targets
+
+    return [("Body1", 1)]
+
 def run_training(sim, args, log_dir=None, enable_writer=True):
     writer = None
     if enable_writer and log_dir is not None:
@@ -116,13 +150,18 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
                     break
 
             if writer is not None and args.iters == 1:
-                target_id = 1
-                if target_id < sim.num_objects:
+                for target_name, target_id in _resolve_rigid_log_targets(sim):
+                    if target_id < 0 or target_id >= sim.num_objects:
+                        continue
                     for time_step in range(len(sim.rigid_x_arrays)):
                         for name, array_list in [
                             ("Pos", sim.rigid_x_arrays),
                             ("Vel", sim.rigid_v_arrays),
                             ("Omega", sim.rigid_omega_arrays),
+                            ("VelForJoint", getattr(sim, "rigid_v_for_joint_arrays", [])),
+                            ("OmegaForJoint", getattr(sim, "rigid_omega_for_joint_arrays", [])),
+                            ("DeltaVel", getattr(sim, "rigid_delta_v_arrays", [])),
+                            ("DeltaOmega", getattr(sim, "rigid_delta_omega_arrays", [])),
                             ("Quat", sim.rigid_quaternion_arrays),
                             ("Force", sim.rigid_force_arrays),
                             ("Torque", sim.rigid_torque_arrays)
@@ -131,12 +170,13 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
                                 grad_data = array_list[time_step].grad.numpy()
                                 if target_id < len(grad_data):
                                     grad_val = grad_data[target_id]
+                                    tag_prefix = f"Rigid_Step_Grad/{target_name}_id{target_id}/{name}"
                                     if len(grad_val) >= 3:
-                                        writer.add_scalar(f'Rigid_Step_Grad/{name}/x', float(grad_val[0]), time_step)
-                                        writer.add_scalar(f'Rigid_Step_Grad/{name}/y', float(grad_val[1]), time_step)
-                                        writer.add_scalar(f'Rigid_Step_Grad/{name}/z', float(grad_val[2]), time_step)
+                                        writer.add_scalar(f"{tag_prefix}/x", float(grad_val[0]), time_step)
+                                        writer.add_scalar(f"{tag_prefix}/y", float(grad_val[1]), time_step)
+                                        writer.add_scalar(f"{tag_prefix}/z", float(grad_val[2]), time_step)
                                     if len(grad_val) == 4:
-                                        writer.add_scalar(f'Rigid_Step_Grad/{name}/w', float(grad_val[3]), time_step)
+                                        writer.add_scalar(f"{tag_prefix}/w", float(grad_val[3]), time_step)
 
             if writer is not None and args.iters > 1:
                 writer.add_scalar('Loss/train', loss_val, i)

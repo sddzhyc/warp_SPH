@@ -98,8 +98,8 @@ def solve_articulated_joints_impulse_inplace(
 	num_bodies: int,
 	num_joints: int,
 	dt: float,
-	rigid_v_out: wp.array(dtype=wp.vec3),
-	rigid_omega_out: wp.array(dtype=wp.vec3),
+	rigid_delta_v_out: wp.array(dtype=wp.vec3),
+	rigid_delta_omega_out: wp.array(dtype=wp.vec3),
 ):
 	tid = wp.tid()
 	if tid >= num_joints:
@@ -128,12 +128,30 @@ def solve_articulated_joints_impulse_inplace(
 	invK = wp.inverse(K)
 
 	impulse = (invK @ delta_x) / dt
+	delta_v_parent = -impulse * rigid_inv_mass[parent]
+	delta_v_child = impulse * rigid_inv_mass[child]
+	delta_omega_parent = rigid_inv_inertia[parent] @ wp.cross(RL1, -impulse)
+	delta_omega_child = rigid_inv_inertia[child] @ wp.cross(RL2, impulse)
 
-	wp.atomic_add(rigid_v_out, parent, -impulse * rigid_inv_mass[parent])
-	wp.atomic_add(rigid_v_out, child, impulse * rigid_inv_mass[child])
+	wp.atomic_add(rigid_delta_v_out, parent, delta_v_parent)
+	wp.atomic_add(rigid_delta_v_out, child, delta_v_child)
 
-	wp.atomic_add(rigid_omega_out, parent, rigid_inv_inertia[parent] @ wp.cross(RL1, -impulse))
-	wp.atomic_add(rigid_omega_out, child, rigid_inv_inertia[child] @ wp.cross(RL2, impulse))
+	wp.atomic_add(rigid_delta_omega_out, parent, delta_omega_parent)
+	wp.atomic_add(rigid_delta_omega_out, child, delta_omega_child)
+
+
+@wp.kernel
+def compose_joint_velocity_from_delta(
+	rigid_v_for_joint: wp.array(dtype=wp.vec3),
+	rigid_omega_for_joint: wp.array(dtype=wp.vec3),
+	rigid_delta_v: wp.array(dtype=wp.vec3),
+	rigid_delta_omega: wp.array(dtype=wp.vec3),
+	rigid_v_out: wp.array(dtype=wp.vec3),
+	rigid_omega_out: wp.array(dtype=wp.vec3),
+):
+	tid = wp.tid()
+	rigid_v_out[tid] = rigid_v_for_joint[tid] + rigid_delta_v[tid]
+	rigid_omega_out[tid] = rigid_omega_for_joint[tid] + rigid_delta_omega[tid]
 
 
 @wp.kernel
@@ -149,11 +167,9 @@ def integrate_rigid_velocity_diff(
 	dt: float,
 	rigid_v_out: wp.array(dtype=wp.vec3),
 	rigid_omega_out: wp.array(dtype=wp.vec3),
-	rigid_inv_inertia_out: wp.array(dtype=wp.mat33),
 ):
 	tid = wp.tid()
 	f = rigid_force[tid] + g * rigid_mass[tid]
-	rigid_inv_inertia_out[tid] = rigid_inv_inertia[tid]
 
 	rigid_v_out[tid] = norm_grad_vec3(rigid_v[tid] + dt * f * rigid_inv_mass[tid])
 	rigid_omega_out[tid] = norm_grad_vec3(rigid_omega[tid] + dt * (rigid_inv_inertia[tid] @ rigid_torque[tid]))

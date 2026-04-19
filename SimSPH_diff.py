@@ -1,7 +1,7 @@
 import time
 from SimSPH import SimSPH
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body_diff, update_rigid_particle_info_diff
-from joint_system import integrate_rigid_velocity_diff, integrate_rigid_pose_diff_inplace, solve_articulated_joints_impulse_inplace
+from joint_system import integrate_rigid_velocity_diff, integrate_rigid_pose_diff_inplace, solve_articulated_joints_impulse_inplace, compose_joint_velocity_from_delta
 from sim_utils import export_ply_points
 from sph_kernel_diff import *
 from norm_grad_utils import sum_L2_states_t, norm_states_grad
@@ -101,6 +101,10 @@ class SimSPH_diff(SimSPH):
         self.rigid_x_arrays = []
         self.rigid_v_arrays = []
         self.rigid_omega_arrays = []
+        self.rigid_v_for_joint_arrays = []
+        self.rigid_omega_for_joint_arrays = []
+        self.rigid_delta_v_arrays = []
+        self.rigid_delta_omega_arrays = []
         self.rigid_quaternion_arrays = []
 
         self.rigid_force_arrays = []
@@ -112,11 +116,15 @@ class SimSPH_diff(SimSPH):
 
         if self.num_rigid_bodies > 0:
             for i in range(self.sim_steps + 1):
-                enable_x_q_grad = (i == self.sim_steps or not self.use_diffFR)
+                enable_x_q_grad = True # (i == self.sim_steps or not self.use_diffFR)
                 self.rigid_x_arrays.append(wp.zeros_like(self.rbs.rigid_x, requires_grad=enable_x_q_grad))
                 self.rigid_quaternion_arrays.append(wp.zeros_like(self.rbs.rigid_quaternion, requires_grad=enable_x_q_grad))
                 self.rigid_v_arrays.append(wp.zeros_like(self.rbs.rigid_v, requires_grad=True))
                 self.rigid_omega_arrays.append(wp.zeros_like(self.rbs.rigid_omega, requires_grad=True))
+                self.rigid_v_for_joint_arrays.append(wp.zeros_like(self.rbs.rigid_v, requires_grad=True))
+                self.rigid_omega_for_joint_arrays.append(wp.zeros_like(self.rbs.rigid_omega, requires_grad=True))
+                self.rigid_delta_v_arrays.append(wp.zeros_like(self.rbs.rigid_v, requires_grad=True))
+                self.rigid_delta_omega_arrays.append(wp.zeros_like(self.rbs.rigid_omega, requires_grad=True))
                 self.rigid_force_arrays.append(wp.zeros_like(self.rbs.rigid_force, requires_grad=True))
                 self.rigid_torque_arrays.append(wp.zeros_like(self.rbs.rigid_torque, requires_grad=True))
                 self.rigid_inertia_arrays.append(wp.zeros_like(self.rbs.rigid_inertia, requires_grad=True))
@@ -125,6 +133,10 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_x_arrays[0], self.rbs.rigid_x)
             wp.copy(self.rigid_v_arrays[0], self.rbs.rigid_v)
             wp.copy(self.rigid_omega_arrays[0], self.rbs.rigid_omega)
+            wp.copy(self.rigid_v_for_joint_arrays[0], self.rbs.rigid_v)
+            wp.copy(self.rigid_omega_for_joint_arrays[0], self.rbs.rigid_omega)
+            self.rigid_delta_v_arrays[0].zero_()
+            self.rigid_delta_omega_arrays[0].zero_()
             wp.copy(self.rigid_quaternion_arrays[0], self.rbs.rigid_quaternion)
             wp.copy(self.rigid_inertia_arrays[0], self.rbs.rigid_inertia)
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
@@ -178,6 +190,8 @@ class SimSPH_diff(SimSPH):
         
         if self.num_rigid_bodies > 0:
             for arrs in [self.rigid_x_arrays, self.rigid_v_arrays, self.rigid_omega_arrays, 
+                         self.rigid_v_for_joint_arrays, self.rigid_omega_for_joint_arrays,
+                         self.rigid_delta_v_arrays, self.rigid_delta_omega_arrays,
                          self.rigid_quaternion_arrays, self.rigid_force_arrays, self.rigid_torque_arrays, 
                          self.rigid_inertia_arrays, self.rigid_inv_inertia_arrays]:
                 for arr in arrs:
@@ -196,6 +210,10 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_x_arrays[0], self.rbs.rigid_x)
             wp.copy(self.rigid_v_arrays[0], self.rbs.rigid_v)
             wp.copy(self.rigid_omega_arrays[0], self.rbs.rigid_omega)
+            wp.copy(self.rigid_v_for_joint_arrays[0], self.rbs.rigid_v)
+            wp.copy(self.rigid_omega_for_joint_arrays[0], self.rbs.rigid_omega)
+            self.rigid_delta_v_arrays[0].zero_()
+            self.rigid_delta_omega_arrays[0].zero_()
             wp.copy(self.rigid_quaternion_arrays[0], self.rbs.rigid_quaternion)
             wp.copy(self.rigid_force_arrays[0], self.rbs.rigid_force)
             wp.copy(self.rigid_torque_arrays[0], self.rbs.rigid_torque)
@@ -211,6 +229,8 @@ class SimSPH_diff(SimSPH):
             if self.num_rigid_bodies > 0:
                 self.rigid_force_arrays[t].zero_()
                 self.rigid_torque_arrays[t].zero_()
+                self.rigid_delta_v_arrays[t].zero_()
+                self.rigid_delta_omega_arrays[t].zero_()
             self.debug_val_arrays[t].zero_()
 
     def normalize_single_state_grad(self, grad_array):
@@ -383,11 +403,12 @@ class SimSPH_diff(SimSPH):
                 ]
             )
             
-            with current_tape:
-                # Rigid Body Update (t -> t+1)
-                if self.num_rigid_bodies > 0:
-                    g = wp.vec3(0.0, self.gravity, 0.0)
-                    if self.num_articulated_joints <= 0 or self.articulated_joints is None:
+            # Rigid Body Update (t -> t+1)
+            if self.num_rigid_bodies > 0:
+                g = wp.vec3(0.0, self.gravity, 0.0)
+                # if False:
+                if self.num_articulated_joints <= 0 or self.articulated_joints is None:
+                    with current_tape:
                         wp.launch(
                             kernel=solve_rigid_body_diff,
                             dim=self.num_objects,
@@ -416,7 +437,8 @@ class SimSPH_diff(SimSPH):
                                 self.rigid_inv_inertia_arrays[t+1],
                             ],
                         )
-                    else:
+                else:
+                    with current_tape:
                         wp.launch(
                             kernel=integrate_rigid_velocity_diff,
                             dim=self.num_objects,
@@ -432,11 +454,13 @@ class SimSPH_diff(SimSPH):
                                 self.dt,
                             ],
                             outputs=[
-                                self.rigid_v_arrays[t+1],
-                                self.rigid_omega_arrays[t+1],
-                                self.rigid_inv_inertia_arrays[t+1],
+                                self.rigid_v_for_joint_arrays[t+1],
+                                self.rigid_omega_for_joint_arrays[t+1],
                             ],
                         )
+
+                        self.rigid_delta_v_arrays[t+1].zero_()
+                        self.rigid_delta_omega_arrays[t+1].zero_()
 
                         wp.launch(
                             kernel=solve_articulated_joints_impulse_inplace,
@@ -446,11 +470,26 @@ class SimSPH_diff(SimSPH):
                                 self.rigid_quaternion_arrays[t],
                                 self.rbs.rigid_quaternion0,
                                 self.rbs.rigid_inv_mass,
-                                self.rigid_inv_inertia_arrays[t+1],
+                                self.rigid_inv_inertia_arrays[t],
                                 self.articulated_joints,
                                 self.num_objects,
                                 self.num_articulated_joints,
                                 self.dt,
+                            ],
+                            outputs=[
+                                self.rigid_delta_v_arrays[t+1],
+                                self.rigid_delta_omega_arrays[t+1],
+                            ],
+                        )
+
+                        wp.launch(
+                            kernel=compose_joint_velocity_from_delta,
+                            dim=self.num_objects,
+                            inputs=[
+                                self.rigid_v_for_joint_arrays[t+1],
+                                self.rigid_omega_for_joint_arrays[t+1],
+                                self.rigid_delta_v_arrays[t+1],
+                                self.rigid_delta_omega_arrays[t+1],
                             ],
                             outputs=[
                                 self.rigid_v_arrays[t+1],
@@ -480,20 +519,20 @@ class SimSPH_diff(SimSPH):
                             ],
                         )
                     
-                    wp.launch(
-                        kernel=update_rigid_particle_info_diff,
-                        dim=self.particle_max_num,
-                        inputs=[x_out, v_out, self.x_0,
-                            self.object_id,
-                            self.materialMarks,
-                            self.rbs.rigid_rest_cm,
-                            self.rigid_x_arrays[t+1],
-                            self.rigid_quaternion_arrays[t+1],
-                            self.rbs.rigid_quaternion0,
-                            self.rigid_v_arrays[t+1],
-                            self.rigid_omega_arrays[t+1],
-                        ]
-                    )
+                        wp.launch(
+                            kernel=update_rigid_particle_info_diff,
+                            dim=self.particle_max_num,
+                            inputs=[x_out, v_out, self.x_0,
+                                self.object_id,
+                                self.materialMarks,
+                                self.rbs.rigid_rest_cm,
+                                self.rigid_x_arrays[t+1],
+                                self.rigid_quaternion_arrays[t+1],
+                                self.rbs.rigid_quaternion0,
+                                self.rigid_v_arrays[t+1],
+                                self.rigid_omega_arrays[t+1],
+                            ]
+                        )
                     
             self.sim_time += self.frame_dt
 

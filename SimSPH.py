@@ -809,15 +809,7 @@ class SimSPH:
         q_np = np.zeros((self.num_objects, 4), dtype=np.float32)
         q_np[:, 3] = 1.0
         if rigid_cfg is not None and rigid_obj_id < self.num_objects:
-            rot_axis = rigid_cfg.get("rotationAxis", [0.0, 0.0, 1.0])
-            rot_angle = rigid_cfg.get("rotationAngle", 0.0)
-            axis = np.array(rot_axis, dtype=np.float32)
-            axis_norm = np.linalg.norm(axis)
-            if axis_norm > 1.0e-8:
-                axis = axis / axis_norm
-                angle = float(rot_angle) * np.pi / 180.0
-                q_wp = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
-                q_np[rigid_obj_id] = np.array([q_wp[0], q_wp[1], q_wp[2], q_wp[3]], dtype=np.float32)
+            q_np[rigid_obj_id] = self._quat_xyzw_from_cfg(rigid_cfg)
         self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat, requires_grad=True)
         self.rbs.rigid_quaternion0 = wp.array(q_np, dtype=wp.quat)
 
