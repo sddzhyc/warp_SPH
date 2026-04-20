@@ -8,6 +8,7 @@ import numpy as np
 import tensorboardX
 from SimSPH_diff import SimSPH_diff
 from SimDFSPH_diff import SimDFSPH_diff
+from SimDFSPH_diff_no_fluid_tape import SimDFSPH_diff as SimDFSPH_diff_no_fluid_tape
 from SimSPH import HASH_GRID_SIZE_SCALE
 from config_builder import SimConfig
 from plot_utils import plot_grid_search_results, save_grid_search_to_csv
@@ -253,6 +254,13 @@ if __name__ == "__main__":
     parser.add_argument("--norm_grad", action="store_true", help="Normalize gradients before optimization.")
     parser.add_argument("--difffr", action="store_true", help="Enable diffFR mode (sparser cross-step gradient flow).")
     parser.add_argument("--method", type=int, default=0, help="Simulation method: 0 for WCSPH, 1 for DFSPH.")
+    parser.add_argument(
+        "--dfsph_impl",
+        type=str,
+        default="no_fluid_tape",
+        choices=["default", "no_fluid_tape"],
+        help="Choose DFSPH differentiable implementation when --method=1.",
+    )
     parser.add_argument("--custom_grad", action="store_true", help="Use custom gradient implementation.")
     parser.add_argument("--init_id", type=int, default=None, help="Select initial rigid-body values from scene JSON keys like velocity_i / angularVelocity_i.")
     h_scale = 1
@@ -356,7 +364,9 @@ if __name__ == "__main__":
         # skip Taichi container initialization
         container = None
         if args.method == 1:
-            sim = SimDFSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
+            dfsph_cls = SimDFSPH_diff if args.dfsph_impl == "default" else SimDFSPH_diff_no_fluid_tape
+            print(f"Using DFSPH implementation: {args.dfsph_impl}")
+            sim = dfsph_cls(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
             h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
         else:
             sim = SimSPH_diff(config, stage_path=args.stage_path, container = container, sim_steps=sim_steps, ply_path=args.ply_path, lr = args.lr, 
@@ -433,7 +443,8 @@ if __name__ == "__main__":
                     del sim # Ensure we free memory from previous sim before creating a new one for the next sample
                     # Re-instantiate sim for each sample
                     if args.method == 1:
-                        sim = SimDFSPH_diff(config, stage_path=args.stage_path, container=container, sim_steps=sim_steps, ply_path=args.ply_path, lr=args.lr, h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
+                        dfsph_cls = SimDFSPH_diff if args.dfsph_impl == "default" else SimDFSPH_diff_no_fluid_tape
+                        sim = dfsph_cls(config, stage_path=args.stage_path, container=container, sim_steps=sim_steps, ply_path=args.ply_path, lr=args.lr, h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr, verbose=True)
                     else:
                         sim = SimSPH_diff(config, stage_path=args.stage_path, container=container, sim_steps=sim_steps, ply_path=args.ply_path, lr=args.lr, h_scale=h_scale, use_custom_grad=use_custom_grad, use_norm_grad=args.norm_grad, use_diffFR=use_difffr)
 
