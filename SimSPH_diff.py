@@ -369,15 +369,12 @@ class SimSPH_diff(SimSPH):
             upper_x_wall_velocity = 0.0
             if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
                 omega = 2.0 * np.pi * self.wave_boundary_frequency
-                shift = 0.5 * self.wave_boundary_amplitude * (
-                    1.0 + np.sin(omega * self.sim_time + self.wave_boundary_phase)
-                )
+                theta = omega * self.sim_time + self.wave_boundary_phase
+                shift = 0.5 * self.wave_boundary_amplitude * (1.0 - np.cos(theta))
                 shift = min(shift, 0.2 * float(self.domain_end[0] - self.domain_start[0]))
                 lower_bound[0] = float(self.domain_start[0] + shift)
                 upper_bound[0] = float(self.domain_end[0] + shift)
-                lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.cos(
-                    omega * self.sim_time + self.wave_boundary_phase
-                )
+                lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.sin(theta)
                 upper_x_wall_velocity = lower_x_wall_velocity
             
             # Substep (Physics Solver)

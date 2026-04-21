@@ -1573,14 +1573,14 @@ class SimSPH:
 
         if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
             omega = 2.0 * np.pi * self.wave_boundary_frequency
-            # Oscillate around the original x-boundary (domainStart[0]) as the center.
+            # Start from the trough at t=0: shift(0)=0 and wall velocity(0)=0.
             theta = omega * self.sim_time + self.wave_boundary_phase
-            shift = self.wave_boundary_amplitude * np.sin(theta)
+            shift = 0.5 * self.wave_boundary_amplitude * (1.0 - np.cos(theta))
             max_shift = 0.2 * float(self.domain_end[0] - self.domain_start[0])
-            shift = max(-max_shift, min(shift, max_shift))
+            shift = min(shift, max_shift)
             lower_bound[0] = float(self.domain_start[0] + shift)
             upper_bound[0] = float(self.domain_end[0] + shift)
-            lower_x_wall_velocity = self.wave_boundary_amplitude * omega * np.cos(theta)
+            lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.sin(theta)
             upper_x_wall_velocity = lower_x_wall_velocity
 
         return lower_bound, upper_bound, float(lower_x_wall_velocity), float(upper_x_wall_velocity)
