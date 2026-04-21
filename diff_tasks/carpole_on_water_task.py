@@ -123,15 +123,18 @@ class CarPoleOnWaterTask(Task):
         # Keep list form for compatibility with existing training logger/override paths.
         self.sim.opt_var = [self.opt_rigid_v]
 
-    def compute_loss(self):
+    def compute_loss(self, end_step=None):
         if self.sim.num_objects <= 0:
             return
+
+        if end_step is None:
+            end_step = self.sim.sim_steps
 
         wp.launch(
             kernel=compute_rod_rotation_loss_kernel,
             dim=1,
             inputs=[
-                self.sim.rigid_quaternion_arrays[self.sim.sim_steps],
+                self.sim.rigid_quaternion_arrays[end_step],
                 self.target_rigid_q,
                 self.rod_rigid_id,
             ],

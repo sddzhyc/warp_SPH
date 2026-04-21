@@ -52,7 +52,6 @@
     ],
 	"TaskConfig":
 	{
-		"end_time": 0.23,
-		"end_timesteps": 1420
+		"end_time": 0.23
 	}
 }

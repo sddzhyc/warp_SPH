@@ -20,12 +20,13 @@
 		"particleRadius": 0.026, 
 		"radius":  0.025,
 		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
-		"waveBoundaryEnable": false,
+		"waveBoundaryEnable": true,
 		"waveBoundaryAmplitude": 0.20,
 		"waveBoundaryFrequency": 1.0,
 		"waveBoundaryPhase": 0.0,
 		"targetTimeSteps": 1000,
-		"end_time": 0.9
+		"end_time": 1.0,
+		"backwardInterval": 5
 	},
 
 	"FluidBlocks": [
