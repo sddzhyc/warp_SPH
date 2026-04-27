@@ -6,13 +6,15 @@ import warp as wp
 import warp.optim
 import numpy as np
 import tensorboardX
+import torch
 from SimSPH_diff import SimSPH_diff
 from SimDFSPH_diff import SimDFSPH_diff
 from SimDFSPH_diff_no_fluid_tape import SimDFSPH_diff as SimDFSPH_diff_no_fluid_tape
+from robots.CartPoleEnv import DifferentiableCartPoleEnv
 from SimSPH import HASH_GRID_SIZE_SCALE
 from config_builder import SimConfig
 from plot_utils import plot_grid_search_results, save_grid_search_to_csv
-from kernel_func import custom_grad_scale, custom_h_scale, use_0_order_grad, use_replay_kernel, auto_replay_scale_from_h_py
+from kernel_func import custom_grad_scale, custom_h_scale, use_const_2order_grad, use_replay_kernel, auto_replay_scale_from_h_py
 
 # wp.config.verify_autograd_array_access = True
 wp.config.verbose = False
@@ -65,6 +67,76 @@ def _resolve_rigid_log_targets(sim):
             return targets
 
     return [("Body1", 1)]
+
+
+def _log_rigid_step_grads(writer, sim):
+    if writer is None:
+        return
+
+    for target_name, target_id in _resolve_rigid_log_targets(sim):
+        if target_id < 0 or target_id >= sim.num_objects:
+            continue
+
+        for time_step in range(len(sim.rigid_x_arrays)):
+            for name, array_list in [
+                ("Pos", sim.rigid_x_arrays),
+                ("Vel", sim.rigid_v_arrays),
+                ("Omega", sim.rigid_omega_arrays),
+                ("VelForJoint", getattr(sim, "rigid_v_for_joint_arrays", [])),
+                ("OmegaForJoint", getattr(sim, "rigid_omega_for_joint_arrays", [])),
+                ("DeltaVel", getattr(sim, "rigid_delta_v_arrays", [])),
+                ("DeltaOmega", getattr(sim, "rigid_delta_omega_arrays", [])),
+                ("Quat", sim.rigid_quaternion_arrays),
+                ("Force", sim.rigid_force_arrays),
+                ("Torque", sim.rigid_torque_arrays),
+            ]:
+                if time_step >= len(array_list):
+                    continue
+                if array_list[time_step].grad is None:
+                    continue
+
+                grad_data = array_list[time_step].grad.numpy()
+                if target_id >= len(grad_data):
+                    continue
+
+                grad_val = grad_data[target_id]
+                tag_prefix = f"Rigid_Step_Grad-{target_name}_id{target_id}/{name}"
+                if len(grad_val) >= 3:
+                    writer.add_scalar(f"{tag_prefix}/x", float(grad_val[0]), time_step)
+                    writer.add_scalar(f"{tag_prefix}/y", float(grad_val[1]), time_step)
+                    writer.add_scalar(f"{tag_prefix}/z", float(grad_val[2]), time_step)
+                if len(grad_val) == 4:
+                    writer.add_scalar(f"{tag_prefix}/w", float(grad_val[3]), time_step)
+
+
+def _log_initial_velocity_grad(writer, controller, step):
+    if writer is None:
+        return
+    if not hasattr(controller, "action") or controller.action.grad is None:
+        return
+
+    grad_vec = controller.action.grad.detach().cpu().numpy().astype(np.float32)
+    writer.add_scalar("InitialVelocityGrad/x", float(grad_vec[0]), step)
+    writer.add_scalar("InitialVelocityGrad/y", float(grad_vec[1]), step)
+    writer.add_scalar("InitialVelocityGrad/z", float(grad_vec[2]), step)
+    writer.add_scalar("InitialVelocityGrad/norm", float(np.linalg.norm(grad_vec)), step)
+
+
+class _InitialVelocityController(torch.nn.Module):
+    def __init__(self, initial_velocity):
+        super().__init__()
+        initial_velocity_np = np.asarray(initial_velocity, dtype=np.float32).reshape(-1)
+        if initial_velocity_np.size != 3:
+            raise ValueError("initial_velocity must be a 3D vector.")
+        self.action = torch.nn.Parameter(torch.tensor(initial_velocity_np, dtype=torch.float32))
+
+    def reset(self):
+        return None
+
+    def forward(self, state_np):
+        print(f"Controller forward called with action output: {self.action.detach().cpu().numpy()}")
+        return self.action
+
 
 def run_training(sim, args, log_dir=None, enable_writer=True):
     writer = None
@@ -151,33 +223,7 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
                     break
 
             if writer is not None and args.iters == 1:
-                for target_name, target_id in _resolve_rigid_log_targets(sim):
-                    if target_id < 0 or target_id >= sim.num_objects:
-                        continue
-                    for time_step in range(len(sim.rigid_x_arrays)):
-                        for name, array_list in [
-                            ("Pos", sim.rigid_x_arrays),
-                            ("Vel", sim.rigid_v_arrays),
-                            ("Omega", sim.rigid_omega_arrays),
-                            ("VelForJoint", getattr(sim, "rigid_v_for_joint_arrays", [])),
-                            ("OmegaForJoint", getattr(sim, "rigid_omega_for_joint_arrays", [])),
-                            ("DeltaVel", getattr(sim, "rigid_delta_v_arrays", [])),
-                            ("DeltaOmega", getattr(sim, "rigid_delta_omega_arrays", [])),
-                            ("Quat", sim.rigid_quaternion_arrays),
-                            ("Force", sim.rigid_force_arrays),
-                            ("Torque", sim.rigid_torque_arrays)
-                        ]:
-                            if time_step < len(array_list) and array_list[time_step].grad is not None:
-                                grad_data = array_list[time_step].grad.numpy()
-                                if target_id < len(grad_data):
-                                    grad_val = grad_data[target_id]
-                                    tag_prefix = f"Rigid_Step_Grad/{target_name}_id{target_id}/{name}"
-                                    if len(grad_val) >= 3:
-                                        writer.add_scalar(f"{tag_prefix}/x", float(grad_val[0]), time_step)
-                                        writer.add_scalar(f"{tag_prefix}/y", float(grad_val[1]), time_step)
-                                        writer.add_scalar(f"{tag_prefix}/z", float(grad_val[2]), time_step)
-                                    if len(grad_val) == 4:
-                                        writer.add_scalar(f"{tag_prefix}/w", float(grad_val[3]), time_step)
+                _log_rigid_step_grads(writer, sim)
 
             if writer is not None and args.iters > 1:
                 writer.add_scalar('Loss/train', loss_val, i)
@@ -214,6 +260,80 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
 
     return last_loss_scalar
 
+
+def run_cartpole_trajectory_optimization(sim, args, log_dir=None, enable_writer=True, output_interval=10, series_prefix=None):
+    if not hasattr(sim, "task") or sim.task.__class__.__name__ != "CarPoleOnWaterTask":
+        raise RuntimeError("CartPole trajectory optimization requires a CarPoleOnWaterTask scene.")
+
+    writer = None
+    if enable_writer and log_dir is not None:
+        writer = tensorboardX.SummaryWriter(log_dir=log_dir)
+        if args.iters == 1:
+            print(f"TensorBoard step logging to {log_dir}")
+        else:
+            print(f"TensorBoard logging to {log_dir}")
+
+    env = DifferentiableCartPoleEnv(
+        sim=sim,
+        control_interval=sim.sim_steps + 1,
+        backward_interval=1,
+        control_start_step=0,
+        include_time=True,
+        norm_grad=args.norm_grad,
+    )
+    env.export_before_diff_reset = bool(series_prefix)
+    env.export_output_interval = int(output_interval)
+    env.export_series_prefix = series_prefix
+    print(f"CartPole trajectory optimization uses DifferentiableCartPoleEnv with control_interval={env.control_interval}, so only the initial step receives one action.")
+
+    initial_velocity = sim.task.opt_rigid_v.numpy()[0]
+    controller = _InitialVelocityController(initial_velocity)
+    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+
+    last_loss_scalar = None
+
+    for i in range(args.iters):
+        print(f"------------Starting cartpole trajectory optimization for {i}/{args.iters} iterations------------")
+        controller.reset()
+        rollout_stats = env.rollout(
+            controller=controller,
+            optimizer=optimizer,
+            grad_clip_norm=None,
+            loss_threshold=None,
+        )
+
+        loss_val = rollout_stats["loss"]
+        last_loss_scalar = float(loss_val)
+        print(f"Iteration {i}: Loss = {loss_val}")
+
+        state_info = sim.task.get_loss_state_info()
+        if state_info:
+            print(f"Loss State Info: {state_info}")
+
+        if writer is not None and args.iters == 1:
+            _log_rigid_step_grads(writer, sim)
+            _log_initial_velocity_grad(writer, controller, i)
+
+        if writer is not None and args.iters > 1:
+            writer.add_scalar("Loss/train", loss_val, i)
+            writer.add_scalar("LR/train", args.lr, i)
+            writer.add_scalar("Control/count", float(rollout_stats.get("controls", 0)), i)
+            writer.add_scalar("Backward/segments", float(rollout_stats.get("segments", 1)), i)
+            writer.add_scalar("Grad/action_norm", float(rollout_stats.get("action_grad_norm", 0.0)), i)
+
+        if np.isnan(last_loss_scalar):
+            print(f"[Train] Early stopping: Loss is NaN at iter {i}, aborting training.")
+            break
+
+        if args.early_stop_loss is not None and last_loss_scalar < args.early_stop_loss:
+            print(f"Early stopping triggered at iter {i}: loss {last_loss_scalar:.6e} < threshold {args.early_stop_loss:.6e}")
+            break
+
+    if writer is not None:
+        writer.close()
+
+    return last_loss_scalar
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--scene_file',
@@ -230,6 +350,7 @@ if __name__ == "__main__":
     parser.add_argument("--verbose", action="store_true", help="Print out additional status messages during execution.")
     parser.add_argument("--test_gradient", action="store_true", help="Run gradient computation test.")
     parser.add_argument("--train", action="store_true", help="Run optimization training loop.")
+    parser.add_argument("--cartpole_env_opt", action="store_true", help="Run CartPole trajectory optimization through DifferentiableCartPoleEnv.")
     parser.add_argument("--iters", type=int, default=10, help="Number of training iterations.")
     parser.add_argument("--early_stop_loss", type=float, default=None, help="Stop training early when loss is below this threshold.")
     # parser.add_argument("--sim_steps", type=int, default=320, help="Number of simulation steps for gradient computation.")
@@ -300,8 +421,8 @@ if __name__ == "__main__":
     if use_replay_kernel:
         particle_radius = config.get_cfg("particleRadius")
         support_radius = float(particle_radius) * 4.0 * float(h_scale)
-        kf.replay_scale = auto_replay_scale_from_h_py(support_radius)
-        print(f"Computed replay_scale from support_radius={support_radius}: {kf.replay_scale}")
+        replay_scale = auto_replay_scale_from_h_py(support_radius)
+        print(f"Computed replay_scale from support_radius={support_radius}: {replay_scale}")
 
     # Robust scene name extraction for Windows/Unix paths
     scene_name = f'{os.path.splitext(os.path.basename(scene_path))[0]}/h{h_scale}/'
@@ -312,7 +433,7 @@ if __name__ == "__main__":
     if use_difffr:
         grad_mode_info += "difffr/"
     if use_custom_grad:
-        if use_0_order_grad:
+        if use_const_2order_grad:
             grad_mode_info += f"g2_custom_const{custom_grad_scale}/"
         else:
             grad_mode_info += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
@@ -394,7 +515,26 @@ if __name__ == "__main__":
                 if hasattr(sim.task, 'opt_v_fluid'):
                     sim.task.opt_v_fluid = new_var
             print(f"Overridden initial opt_var to: {sim.task.opt_rigid_v.numpy()}")
-        if args.grid_search or args.grid_search_vy or args.grid_search_vx:
+        if args.cartpole_env_opt:
+            time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            log_vx = sim.task.opt_rigid_v.numpy()[0][0] if hasattr(sim.task, 'opt_rigid_v') else None
+            log_vy = sim.task.opt_rigid_v.numpy()[0][1] if hasattr(sim.task, 'opt_rigid_v') else None
+            log_dir = f"runs/{scene_name}/cartpole_env/vx_{log_vx:.3f}_vy_{log_vy:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
+            last_loss = run_cartpole_trajectory_optimization(
+                sim,
+                args,
+                log_dir=log_dir,
+                enable_writer=True,
+                output_interval=output_interval,
+                series_prefix=series_prefix,
+            )
+            if last_loss is not None:
+                try:
+                    print(f"FINAL_LOSS: {float(last_loss):.6f}")
+                except Exception:
+                    print(f"FINAL_LOSS: {last_loss}")
+        elif args.grid_search or args.grid_search_vy or args.grid_search_vx:
             import csv
             
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")

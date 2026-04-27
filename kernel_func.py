@@ -1,8 +1,8 @@
 import math
 import warp as wp
 
-use_0_order_grad = True
-custom_h_scale, custom_grad_scale = 0., 0.0001 # 4.0, 0.1 # 1.0, 0.0001
+use_const_2order_grad = True # 该项是否启用对于diffFR也有影响
+custom_h_scale, custom_grad_scale = 0., 0. # 4.0, 0.1 # 1.0, 0.0001
 
 use_replay_kernel = True
 replay_scale = 0.0
@@ -240,7 +240,7 @@ def adj_cubic_kernel_derivative(r: wp.vec3, support_radius: float, adj_ret: wp.v
         adj_r += adj_r_norm * (r * inv_r_norm)
     wp.adjoint[r] += adj_r * custom_grad_scale # Add scale param 
 
-if use_0_order_grad:
+if use_const_2order_grad:
     print("Using 0-order gradient for cubic_kernel_derivative_custom")
     @wp.func_grad(cubic_kernel_derivative_custom)
     def adj_cubic_kernel_derivative_2(r: wp.vec3, support_radius: float, adj_ret: wp.vec3):

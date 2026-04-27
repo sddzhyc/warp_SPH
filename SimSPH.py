@@ -224,6 +224,11 @@ class SimSPH:
             wp.copy(self.rbs.rigid_v, self.rigid_v_initial)
             wp.copy(self.rbs.rigid_omega, self.rigid_omega_initial)
             wp.copy(self.rbs.rigid_quaternion, self.rigid_quaternion_initial)
+
+        # Reset simulation clock so wave boundary state returns to initial phase.
+        self.sim_time = 0.0
+        self.time_step = 0
+
     def compute_cube_particle_num(self, start, end):
         num_dim = []
         for i in range(self.dim):
@@ -381,6 +386,13 @@ class SimSPH:
              # assume path is relative to this file's directory (project root)
              geometry_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), geometry_file)
         mesh = tm.load(geometry_file)
+        if isinstance(mesh, tm.Scene):
+            if len(mesh.geometry) == 0:
+                raise ValueError(f"Loaded empty scene from {geometry_file}")
+            mesh_list = [geometry.copy() for geometry in mesh.geometry.values() if hasattr(geometry, "vertices")]
+            if len(mesh_list) == 0:
+                raise ValueError(f"No mesh geometry found in scene loaded from {geometry_file}")
+            mesh = mesh_list[0] if len(mesh_list) == 1 else tm.util.concatenate(mesh_list)
         mesh.apply_scale(rigid_body["scale"])
         offset = np.array(rigid_body["translation"])
         if "rotationAngle" in rigid_body and "rotationAxis" in rigid_body:

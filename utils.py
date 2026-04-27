@@ -2,15 +2,16 @@ import datetime
 import os
 
 from SimSPH import HASH_GRID_SIZE_SCALE
-from kernel_func import custom_grad_scale, custom_h_scale, use_0_order_grad
+from kernel_func import custom_grad_scale, custom_h_scale, use_const_2order_grad
 
 
-def export_backward_data(sim, sim_steps, output_interval, series_prefix):
-    cnt_ply = 0
+def export_backward_data(sim, sim_steps, output_interval, series_prefix, start_cnt=0):
+    cnt_ply = int(start_cnt)
     for time_step in range(sim_steps):
         if time_step % output_interval == 0:
             sim.export_ply_from_diff(f"{series_prefix}", time_step, cnt_ply)
             cnt_ply += 1
+    return cnt_ply
 
 
 def build_grad_mode_info(args):
@@ -18,7 +19,7 @@ def build_grad_mode_info(args):
     if args.difffr:
         grad_mode_info += "difffr/"
     if args.custom_grad:
-        if use_0_order_grad:
+        if use_const_2order_grad:
             grad_mode_info += f"g2_custom_const{custom_grad_scale}/"
         else:
             grad_mode_info += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
@@ -39,7 +40,9 @@ def build_scene_name_with_grad_mode(args, end_time=None):
     scene_name = f"{os.path.splitext(os.path.basename(args.scene_file))[0]}/h{args.h_scale}/"
     scene_name += f"hg{HASH_GRID_SIZE_SCALE}/"
     scene_name += f"{build_end_time_tag(end_time)}/"
-    return f"{scene_name}controller/{build_grad_mode_info(args)}"
+    replay_mode_enabled = bool(getattr(args, "replay_mode", False))
+    mode_tag = "replay_mode" if replay_mode_enabled else "direct_mode"
+    return f"{scene_name}controller/{mode_tag}/{build_grad_mode_info(args)}"
 
 
 def build_export_settings(args, config, end_time=None):
@@ -73,9 +76,15 @@ def build_default_log_dir(args, end_time=None):
     return f"runs/{scene_name}/{time_str}_lr_{args.lr}"
 
 
+def build_controller_run_tag(args):
+    time_tag = "time_in_state" if bool(args.time_in_state) else "no_t"
+    loss_threshold_tag = f"max_loss_{float(args.loss_threshold):g}"
+    return f"{time_tag}_{loss_threshold_tag}"
+
+
 def build_checkpoint_dir(args, end_time=None):
     # Keep checkpoint paths based only on grad mode information.
     grad_mode_info = build_grad_mode_info(args)
     end_time_tag = build_end_time_tag(end_time)
     time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return os.path.join("checkpoints", end_time_tag, f"{grad_mode_info}/{time_str}_lr_{args.lr}")
+    return f"checkpoints/{end_time_tag}/{grad_mode_info}/{time_str}_lr_{args.lr}"

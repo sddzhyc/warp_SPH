@@ -2,58 +2,32 @@ import torch
 from torch import nn
 
 
-class _MLPController(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dims, action_min, action_max):
+class Controller(nn.Module):
+    def __init__(self) -> None:
         super().__init__()
-        self.dim = int(output_dim)
-        self.intput_dim = int(input_dim)
-        self.output_dim = int(output_dim)
+        self.dim = 3
+        self.intput_dim = 27
+        self.output_dim = 3
 
-        layers = []
-        last_dim = self.intput_dim
-        for h in hidden_dims:
-            layers.append(nn.Linear(last_dim, int(h)))
-            layers.append(nn.ReLU())
-            last_dim = int(h)
-        layers.append(nn.Linear(last_dim, self.output_dim))
-        self.linear_relu_stack = nn.Sequential(*layers)
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(self.intput_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, self.output_dim),
+        )
 
-        self.register_buffer("action_min", torch.tensor(action_min, dtype=torch.float32))
-        self.register_buffer("action_max", torch.tensor(action_max, dtype=torch.float32))
+        self.register_buffer("action_min", torch.tensor([-0.5, -0.5, -0.5], dtype=torch.float32))
+        self.register_buffer("action_max", torch.tensor([0.5, 0.0, 0.5], dtype=torch.float32))
 
     def forward(self, x):
-        # Keep dtype/device consistent with the model while supporting list/numpy inputs.
-        ref = self.action_min
-        x = torch.as_tensor(x, dtype=torch.float32, device=ref.device)
+        x = torch.as_tensor(x, dtype=torch.float32, device=self.action_min.device)
         control_signal = self.linear_relu_stack(x)
         control_signal = torch.clamp(control_signal, min=self.action_min, max=self.action_max)
         return control_signal
 
-
-class Controller(_MLPController):
-    def __init__(self) -> None:
-        # 3D default version:
-        # input: [time + 2 parts state], 27 dims with full quaternion per body.
-        # output: [vx, vy, vz].
-        super().__init__(
-            input_dim=27,
-            output_dim=3,
-            hidden_dims=(64, 64, 32),
-            action_min=[-0.5, -0.5, -0.5],
-            action_max=[0.5, 0.0, 0.5],
-        )
-
-
-class Controller2D(_MLPController):
-    def __init__(self) -> None:
-        # Keep the previous 2D cartpole controller behavior.
-        super().__init__(
-            input_dim=13,
-            output_dim=2,
-            hidden_dims=(16, 16),
-            action_min=[-0.5, -0.5],
-            action_max=[0.5, 0.0],
-        )
 
 class Controller2D(nn.Module):
     def __init__(self) -> None:
