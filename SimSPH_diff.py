@@ -11,9 +11,9 @@ import warp as wp
 import warp.optim
 import math
 import os
-from diff_tasks.ball_demo_task import BallDemoTask
-from diff_tasks.skip_stone_task import SkipStoneTask
-from diff_tasks.carpole_on_water_task import CarPoleOnWaterTask
+from tasks.ball_demo_task import BallDemoTask
+from tasks.skip_stone_task import SkipStoneTask
+from tasks.carpole_on_water_task import CarPoleOnWaterTask
 
 @wp.kernel
 def assign_initial_fluid_velocity(
@@ -202,6 +202,9 @@ class SimSPH_diff(SimSPH):
     def reset(self):
         # Reset initial state
         super().reset()
+        # Reset simulation clock so wave boundary state returns to initial phase.
+        self.sim_time = 0.0
+        self.time_step = 0
         wp.copy(self.x_arrays[0], self.x)
         wp.copy(self.v_arrays[0], self.v)
         wp.copy(self.rho_arrays[0], self.rho)
@@ -232,6 +235,54 @@ class SimSPH_diff(SimSPH):
                 self.rigid_delta_v_arrays[t].zero_()
                 self.rigid_delta_omega_arrays[t].zero_()
             self.debug_val_arrays[t].zero_()
+
+    def diff_reset(self, final_step):
+
+        if final_step < 0 or final_step > self.sim_steps:
+            raise ValueError(f"final_step out of range: {final_step}, expected [0, {self.sim_steps}]")
+        
+        self.clear_grad()
+
+        # Move final_step state to t=0 directly (no terminal staging buffer, no reset call).
+        wp.copy(self.x_arrays[0], self.x_arrays[final_step])
+        wp.copy(self.v_arrays[0], self.v_arrays[final_step])
+        wp.copy(self.rho_arrays[0], self.rho_arrays[final_step])
+        wp.copy(self.x, self.x_arrays[0])
+        wp.copy(self.v, self.v_arrays[0])
+        wp.copy(self.rho, self.rho_arrays[0])
+
+        if self.num_rigid_bodies > 0:
+            wp.copy(self.rigid_x_arrays[0], self.rigid_x_arrays[final_step])
+            wp.copy(self.rigid_v_arrays[0], self.rigid_v_arrays[final_step])
+            wp.copy(self.rigid_omega_arrays[0], self.rigid_omega_arrays[final_step])
+            wp.copy(self.rigid_quaternion_arrays[0], self.rigid_quaternion_arrays[final_step])
+            wp.copy(self.rigid_inertia_arrays[0], self.rigid_inertia_arrays[final_step])
+            wp.copy(self.rigid_inv_inertia_arrays[0], self.rigid_inv_inertia_arrays[final_step])
+
+            wp.copy(self.rigid_v_for_joint_arrays[0], self.rigid_v_arrays[0])
+            wp.copy(self.rigid_omega_for_joint_arrays[0], self.rigid_omega_arrays[0])
+
+            # Keep rbs pointers/data aligned with t=0 checkpoint arrays.
+            self.rbs.rigid_x = self.rigid_x_arrays[0]
+            self.rbs.rigid_v = self.rigid_v_arrays[0]
+            self.rbs.rigid_omega = self.rigid_omega_arrays[0]
+            self.rbs.rigid_quaternion = self.rigid_quaternion_arrays[0]
+            self.rbs.rigid_force = self.rigid_force_arrays[0]
+            self.rbs.rigid_torque = self.rigid_torque_arrays[0]
+            self.rbs.rigid_inertia = self.rigid_inertia_arrays[0]
+            self.rbs.rigid_inv_inertia = self.rigid_inv_inertia_arrays[0]
+
+        # Clear transient per-step buffers so the next segment starts from a clean graph/state cache.
+        for t in range(0, self.sim_steps + 1):
+            if t < len(self.pressure_arrays):
+                self.pressure_arrays[t].zero_()
+            self.a_arrays[t].zero_()
+            self.debug_val_arrays[t].zero_()
+            if self.num_rigid_bodies > 0:
+                self.rigid_force_arrays[t].zero_()
+                self.rigid_torque_arrays[t].zero_()
+                self.rigid_delta_v_arrays[t].zero_()
+                self.rigid_delta_omega_arrays[t].zero_()
 
     def normalize_single_state_grad(self, grad_array):
         """Helper to normalize a single state gradient array using L2 norm."""
@@ -363,19 +414,7 @@ class SimSPH_diff(SimSPH):
                 # build grid
                 self.grid.build(x_in, self.grid_size)
 
-            lower_bound = np.array(self.domain_start, dtype=np.float32)
-            upper_bound = np.array(self.domain_end, dtype=np.float32)
-            lower_x_wall_velocity = 0.0
-            upper_x_wall_velocity = 0.0
-            if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
-                omega = 2.0 * np.pi * self.wave_boundary_frequency
-                theta = omega * self.sim_time + self.wave_boundary_phase
-                shift = 0.5 * self.wave_boundary_amplitude * (1.0 - np.cos(theta))
-                shift = min(shift, 0.2 * float(self.domain_end[0] - self.domain_start[0]))
-                lower_bound[0] = float(self.domain_start[0] + shift)
-                upper_bound[0] = float(self.domain_end[0] + shift)
-                lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.sin(theta)
-                upper_x_wall_velocity = lower_x_wall_velocity
+            lower_bound, upper_bound, lower_x_wall_velocity, upper_x_wall_velocity = self._get_wave_boundary_state()
             
             # Substep (Physics Solver)
             self.sub_step(t)
