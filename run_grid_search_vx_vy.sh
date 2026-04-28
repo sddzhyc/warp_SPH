@@ -9,7 +9,7 @@ set -euo pipefail
 #   --lr 0.2 --method 1 --reduce_lr --init_id 5 --use_difffr --train --iters 100
 
 SCENE_FILE="./data/scenes/skip_stone_difffr_DFSPH.json"
-LR="0.2"
+LR="0.5"
 METHOD="1"
 INIT_ID="5"
 ITERS="100"
@@ -23,12 +23,12 @@ USE_DIFFFR="0"
 # Grid configuration initialized from run_simulation_diff.py defaults:
 #   vx_min=0, vx_max=30, vx_samples=4
 #   vy_min=-30, vy_max=0, vy_samples=4
-VX_MIN="0"
-VX_MAX="30"
-VX_SAMPLES="4"
-VY_MIN="-30"
-VY_MAX="0"
-VY_SAMPLES="4"
+VX_MIN="2"
+VX_MAX="32"
+VX_SAMPLES="5"
+VY_MIN="-32"
+VY_MAX="2"
+VY_SAMPLES="5"
 
 # Derive step from min/max/samples to match Python-side default spacing.
 VX_STEP=$(awk -v min="$VX_MIN" -v max="$VX_MAX" -v n="$VX_SAMPLES" 'BEGIN { if (n <= 1) print 1; else printf "%.10g", (max-min)/(n-1) }')
@@ -58,7 +58,7 @@ fi
 
 CSV_PATH="$OUT_DIR/grid_results_iters${ITERS}_lr${LR}${FLAGS_SUFFIX}_${TIME_STR}.csv"
 if [[ ! -f "$CSV_PATH" ]]; then
-  echo "time,vx,vy,iters,lr,method,init_id,loss" > "$CSV_PATH"
+  echo "time,vx,vy,iters,lr,method,init_id,loss,status,exit_code,error_reason" > "$CSV_PATH"
 fi
 
 mapfile -t VX_VALUES < <(seq "$VX_MIN" "$VX_STEP" "$VX_MAX")
@@ -71,6 +71,8 @@ if [[ "$TOTAL" -le 0 ]]; then
 fi
 
 IDX=0
+SUCCESS_COUNT=0
+FAIL_COUNT=0
 for VX in "${VX_VALUES[@]}"; do
   for VY in "${VY_VALUES[@]}"; do
     IDX=$((IDX + 1))
@@ -78,6 +80,7 @@ for VX in "${VX_VALUES[@]}"; do
 
     # need to use /d/SoftWare/python-3.9/python.exe and capture FINAL_LOSS
     TMP_OUT=$(mktemp)
+    set +e
     /d/SoftWare/python-3.9/python.exe ./run_simulation_diff.py \
       --scene_file "$SCENE_FILE" \
       --lr "$LR" \
@@ -91,20 +94,42 @@ for VX in "${VX_VALUES[@]}"; do
       --iters "$ITERS" \
       --vx "$VX" \
       --vy "$VY" 2>&1 | tee "$TMP_OUT"
+    PIPE_STAT=("${PIPESTATUS[@]}")
+    set -e
+    PY_EXIT="${PIPE_STAT[0]}"
 
     # extract FINAL_LOSS printed by run_simulation_diff.py
     LOSS_LINE=$(grep -m1 "FINAL_LOSS:" "$TMP_OUT" || true)
     LOSS=""
+    STATUS="ok"
+    ERROR_REASON=""
     if [[ -n "$LOSS_LINE" ]]; then
       LOSS=$(echo "$LOSS_LINE" | awk -F":" '{print $2}' | tr -d '[:space:]')
     else
       LOSS="NaN"
     fi
+
+    if [[ "$PY_EXIT" -ne 0 ]]; then
+      STATUS="failed"
+      LOSS="NaN"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+
+      ERROR_REASON=$(grep -E "Traceback|Exception|Error|error|AssertionError|KeyError|AttributeError|RuntimeError|ValueError" "$TMP_OUT" | tail -n 1 || true)
+      if [[ -z "$ERROR_REASON" ]]; then
+        ERROR_REASON=$(tail -n 1 "$TMP_OUT" | tr -d '\r' || true)
+      fi
+      ERROR_REASON=$(echo "$ERROR_REASON" | tr '\n' ' ' | sed 's/"/""/g')
+
+      echo "[$IDX/$TOTAL] Failed sample vx=$VX vy=$VY, exit_code=$PY_EXIT"
+    else
+      SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+    fi
+
     rm -f "$TMP_OUT"
 
     # append record to CSV
-    echo "$(date +%Y%m%d-%H%M%S),$VX,$VY,$ITERS,$LR,$METHOD,$INIT_ID,$LOSS" >> "$CSV_PATH"
+    echo "$(date +%Y%m%d-%H%M%S),$VX,$VY,$ITERS,$LR,$METHOD,$INIT_ID,$LOSS,$STATUS,$PY_EXIT,\"$ERROR_REASON\"" >> "$CSV_PATH"
   done
 done
 
-echo "Grid search finished. Total runs: $TOTAL"
+echo "Grid search finished. Total runs: $TOTAL, success: $SUCCESS_COUNT, failed: $FAIL_COUNT"

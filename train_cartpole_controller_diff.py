@@ -712,6 +712,14 @@ def main():
     else:
         train_controller_online(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
 
+    if export_settings is not None:
+        output_ply, _, _, series_prefix, _, _ = export_settings
+        if output_ply:
+            print(f"PLY export prefix: {series_prefix}")
+            print(f"PLY export directory: {os.path.dirname(series_prefix)}")
+        else:
+            print("PLY export disabled by scene config.")
+
 
 if __name__ == "__main__":
     main()

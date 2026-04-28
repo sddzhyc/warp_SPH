@@ -1,0 +1,67 @@
+{
+	"Configuration": 
+	{
+
+		"domainStart": [-2.55, -0.05, -1.6],
+		"domainEnd": [2.55, 3.95, 1.6],
+		"fps" : 240,
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 1,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.0016,
+		"stiffness": 50000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.025, 
+		"radius":  0.025,
+		"end_time": 2.0,
+		"method": 1
+  },
+	"FluidBlocks": [
+		{
+			"plyFile": "./data/ply/bunny_fluid.ply",
+			"objectId": 0,
+			"start": [-2.4, 0.1, -1.5],
+			"end": [-0.5, 1.2, 1.5],
+			"translation": [0.0, 0.0, 0.0],
+			"density": 1000.0,
+			"scale": [1,1,1],
+			"velocity": [0.0, 0.0, 0.0],
+			"viscosity" : 0.01,
+			"color": [50, 100, 200]
+		}
+	],
+	"RigidBodies": [
+		{
+			"objectId": 1,
+			"geometryFile": "./data/models/bunny-fix.obj",
+			"isDynamic": true, 
+			"density": 200,
+			"translation": [-1.0,0.8,-0.6], 
+			"rotationAxis": [0, 1, 0],
+			"rotationAngle": 0,
+			"scale": [4.5, 4.5, 4.5],
+			"scale2": [0,0,0],
+			"velocity": [0, -1, 0],
+			"angularVelocity": [0, 0, 0],
+			"color": [0.3, 0.5, 0.8, 1.0], 
+			"initVelocity": [0, -1, 0],
+			"targetX": [1.0, 0.5, 0.7],
+			"targetAngleInDegree": [0, 180, 0],
+			"showTargetMode": 5,
+			"targetScale": [1.0, 1.0, 1.0],
+
+			"translation2": [-1.0,0.6,-0.6]
+		}
+	]
+	
+}
+
+
+

@@ -1,0 +1,85 @@
+{
+	"Configuration": 
+	{
+		"fps" : 240,
+		"domainStart": [-2.1, 0, -0.85],
+		"domainEnd": [2.1, 3.0, 0.85],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000, 
+		"simulationMethod": 1,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.0016,
+		"stiffness": 50000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.025, 
+		"radius":  0.025,
+		"ball": {"center": [-2.85, 0.7, 0.0], "scale": [0.2, 0.05, 0.2]},
+		"end_time": 0.23,
+		"num_timesteps": 1420,
+		"method": 1
+	},
+	"FluidBlocks": [
+	{
+		"objectId": 0,
+		"plyFile_old": "./skip_stones/fluid.ply",
+		"start": [-2, 0.1, -0.75],
+		"end": [2, 0.9, 0.75],
+		"translation": [0, 0.0, 0.0],
+		"scale": [1,1,1],
+		"velocity": [0.0, 0.0, 0.0],
+		"density": 1000.0,
+		"color": [50, 100, 200]
+	}],
+	"RigidBodies": [
+	{
+		"objectId": 1,
+		"geometryFile": "./data/models/sphere.obj",
+		"translation": [-2,1.2,0],
+		"rotationAxis": [0, 0, 1],
+		"rotationAngle": 0,
+		"scale": [0.2, 0.05, 0.2],
+
+		"velocity": [10, -5, 0.0],
+		"angularVelocity": [0, 0, 0],
+
+		"velocity_6": [18.706224  , -1.3033642 , -0.06581843],
+		"angularVelocity_6": [0.0987245 , -0.30127525, -0.09872418],
+
+		"velocity_5": [20, 0, 0.0],
+		"angularVelocity_5": [0, 0, 0],
+
+
+		"velocity_4": [20, -20, 0.0],
+		"angularVelocity_4": [0, 0, 0],
+
+
+		"velocity_3": [10, -5, 0.0],
+		"angularVelocity_3": [0, 0, 0],
+
+		"velocity_2": [25, -25, 0.0],
+		"angularVelocity_2": [0, 0, 0],
+		
+		"opti2": "[ 32.393375 , -12.504431 ,   1.1839575]], dtype=float32), array([[-6.45517  ,  2.0258448,  7.7071548]]",
+		
+		"velocity_opti1_2": [29.2807 , -13.7251 ,    -3.7723],
+		"angularVelocity_opti1_2": [-4.9853 , 20.1326  ,  5.266],
+
+		"velocity_opti1": [26.488722 , -14.523201 ,   1.3094168],
+		"angularVelocity_opti1": [-4.3880954, 18.697014 ,  7.5453134],
+	
+		"velocity_1": [25, -16, 0.0],
+		"angularVelocity_1": [-3, 20, 6],
+
+		"density": 2000,
+		"isDynamic": true,
+		"targetX": [1.7, 1.6, 0.0],
+		"targetAngleInDegree": [0, 0, 0]
+	}
+    ]
+}
