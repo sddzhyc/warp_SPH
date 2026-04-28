@@ -192,12 +192,12 @@ class WaterRaftingTask(Task):
         init_v = self.sim.rigid_v_arrays[0].numpy()[self.target_rigid_id]
         init_omega = self.sim.rigid_omega_arrays[0].numpy()[self.target_rigid_id]
 
-        info["target_final_pos"] = final_x
-        info["target_target_pos"] = target_x
-        info["target_final_q"] = final_q
-        info["target_target_q"] = target_q
-        info["target_init_v"] = init_v
-        info["target_init_omega"] = init_omega
+        info["final_pos"] = final_x
+        info["target_pos"] = target_x
+        info["final_q"] = final_q
+        info["target_q"] = target_q
+        info["init_v"] = init_v
+        info["init_omega"] = init_omega
         return info
 
     def norm_final_grad(self):

@@ -446,7 +446,7 @@ class SimSPH_diff(SimSPH):
             # Rigid Body Update (t -> t+1)
             if self.num_rigid_bodies > 0:
                 g = wp.vec3(0.0, self.gravity, 0.0)
-                # if False:
+
                 if self.num_articulated_joints <= 0 or self.articulated_joints is None:
                     with current_tape:
                         wp.launch(
@@ -559,22 +559,23 @@ class SimSPH_diff(SimSPH):
                                 self.rigid_inv_inertia_arrays[t+1],
                             ],
                         )
-                    
-                        wp.launch(
-                            kernel=update_rigid_particle_info_diff,
-                            dim=self.particle_max_num,
-                            inputs=[x_out, v_out, self.x_0,
-                                self.object_id,
-                                self.materialMarks,
-                                self.rbs.rigid_rest_cm,
-                                self.rigid_x_arrays[t+1],
-                                self.rigid_quaternion_arrays[t+1],
-                                self.rbs.rigid_quaternion0,
-                                self.rigid_v_arrays[t+1],
-                                self.rigid_omega_arrays[t+1],
-                            ]
-                        )
-                    
+
+                with current_tape:
+                    wp.launch(
+                        kernel=update_rigid_particle_info_diff,
+                        dim=self.particle_max_num,
+                        inputs=[x_out, v_out, self.x_0,
+                            self.object_id,
+                            self.materialMarks,
+                            self.rbs.rigid_rest_cm,
+                            self.rigid_x_arrays[t+1],
+                            self.rigid_quaternion_arrays[t+1],
+                            self.rbs.rigid_quaternion0,
+                            self.rigid_v_arrays[t+1],
+                            self.rigid_omega_arrays[t+1],
+                        ]
+                    )
+
             self.sim_time += self.frame_dt
 
             # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
