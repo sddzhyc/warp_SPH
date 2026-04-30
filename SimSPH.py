@@ -959,11 +959,11 @@ class SimSPH:
         
         self.fluid_particle_num = fluid_particle_num
         self.solid_particle_num = rigid_particle_num
-        self.emitted_particle_num = 2000
-        # self.emitted_particle_num = self.compute_emitted_fluid_particle_num(cfg.get_cfg("nPipe"), cfg.get_cfg("quality"))
-        self.particle_max_num = fluid_particle_num + rigid_particle_num + self.emitted_particle_num
+        # No emitted particle buffer: allocate only real particles.
+        self.emitted_particle_num = 0
+        self.particle_max_num = fluid_particle_num + rigid_particle_num
         self.num_rigid_bodies = len(rigid_blocks)+len(rigid_bodies)
-
+        print(f"Total fluid particles: {self.fluid_particle_num}, total rigid particles: {self.solid_particle_num}, total allocated: {self.particle_max_num}")
         if len(self.object_collection) > 0:
             self.num_objects = max(self.object_collection.keys()) + 1
         else:
@@ -1058,6 +1058,8 @@ class SimSPH:
                               color=color,
                               material=1) # 1 indicates fluid
         
+
+        print(f"total particles after fluid blocks: {self.num_particles_curr}")
         # Rigid block
         for rigid in rigid_blocks:
             obj_id = rigid["objectId"]
@@ -1096,7 +1098,7 @@ class SimSPH:
                               is_dynamic=is_dynamic,
                               color=color,
                               material=0) # 1 indicates solid
-
+        print(f"total particles after rigid blocks: {self.num_particles_curr}")
         # Rigid bodies
         for rigid_body in rigid_bodies:
             obj_id = rigid_body["objectId"]
@@ -1157,6 +1159,7 @@ class SimSPH:
                 ]
             )
             self.num_particles_curr += num_particles_obj
+        print(f"total particles after rigid bodies: {self.num_particles_curr}")
 
         # some stntance after init needed to run
         # Rigid body logic moved to kernels
@@ -1349,52 +1352,18 @@ class SimSPH:
         print(f"Initializing particle arrays with {num_particles} particles from PLY")
         self.particle_max_num = num_particles
 
-        if self.ps is not None:
-            self.fluid_particle_num = int(self.ps.fluid_particle_num)
-            self.solid_particle_num = int(self.ps.solid_particle_num)
-            # self.particle_max_num = int(self.ps.particle_max_num) # Don't overwrite this from PS, use PLY count
-            self.num_rigid_bodies = int(self.ps.num_rigid_bodies)
-            self.num_objects = int(self.ps.num_objects)
-            rigid_cfg = self.cfg.get_rigid_bodies() if hasattr(self, "cfg") and self.cfg is not None else []
-            self.scene_rigid_object_ids = [int(rb.get("objectId", i)) for i, rb in enumerate(rigid_cfg)]
-            
-            self.rbs = RigidBodies()
-            if self.num_rigid_bodies > 0:
-                self.rbs.rigid_rest_cm = wp.array(self.ps.rigid_rest_cm.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_x       = wp.array(self.ps.rigid_x.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
-                self.rbs.rigid_v0      = wp.array(self.ps.rigid_v0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                self.rbs.rigid_v       = wp.array(self.ps.rigid_v.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
-                self.rbs.rigid_force   = wp.array(self.ps.rigid_force.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
-                self.rbs.rigid_torque  = wp.array(self.ps.rigid_torque.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
-                self.rbs.rigid_omega  = wp.array(self.ps.rigid_omega.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3, requires_grad=True)
-                self.rbs.rigid_omega0 = wp.array(self.ps.rigid_omega0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.vec3)
-                
-                q_np = self.ps.rigid_quaternion.to_numpy()[:self.num_objects].astype(np.float32)
-                if q_np.ndim == 1:
-                    q_np = q_np.reshape(1, 4)
-                q_np = q_np[:, [1, 2, 3, 0]].copy()
-                self.rbs.rigid_quaternion = wp.array(q_np, dtype=wp.quat)
-                self.rbs.rigid_quaternion0 = wp.array(q_np, dtype=wp.quat)
-                
-                self.rbs.rigid_mass     = wp.array(self.ps.rigid_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
-                self.rbs.rigid_inv_mass = wp.array(self.ps.rigid_inv_mass.to_numpy()[:self.num_objects].astype(np.float32), dtype=float)
-                self.rbs.rigid_inertia     = wp.array(self.ps.rigid_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
-                self.rbs.rigid_inertia0    = wp.array(self.ps.rigid_inertia0.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
-                self.rbs.rigid_inv_inertia = wp.array(self.ps.rigid_inv_inertia.to_numpy()[:self.num_objects].astype(np.float32), dtype=wp.mat33)
+        self.rbs = RigidBodies() # Assuming default constructor works or handles empty
+        self.num_objects = 0
+        self.num_rigid_bodies = 0
+        # Count fluid particles if material is available, otherwise assume all are fluid if not specified
+        if 'material' in attrs:
+            mat = attrs['material'].astype(np.int32)
+            self.fluid_particle_num = np.sum(mat == MaterialType.FLUID)
+            self.solid_particle_num = np.sum(mat == MaterialType.SOLID)
         else:
-             # If no PS, maybe initialize empty RBS?
-             self.rbs = RigidBodies() # Assuming default constructor works or handles empty
-             self.num_objects = 0
-             self.num_rigid_bodies = 0
-             # Count fluid particles if material is available, otherwise assume all are fluid if not specified
-             if 'material' in attrs:
-                 mat = attrs['material'].astype(np.int32)
-                 self.fluid_particle_num = np.sum(mat == MaterialType.FLUID)
-                 self.solid_particle_num = np.sum(mat == MaterialType.SOLID)
-             else:
-                 self.fluid_particle_num = self.particle_max_num
-                 self.solid_particle_num = 0
-        
+            self.fluid_particle_num = self.particle_max_num
+            self.solid_particle_num = 0
+
         # Allocate basic fields
         self.x = wp.array(pos, dtype=wp.vec3, requires_grad=True)
         

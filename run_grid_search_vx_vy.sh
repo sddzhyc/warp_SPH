@@ -9,16 +9,16 @@ set -euo pipefail
 #   --lr 0.2 --method 1 --reduce_lr --init_id 5 --use_difffr --train --iters 100
 
 SCENE_FILE="./data/scenes/skip_stone_difffr_DFSPH.json"
-LR="0.5"
+LR="0.2"
 METHOD="1"
 INIT_ID="5"
 ITERS="100"
 
 # Feature flags used in command line (1=enabled, 0=disabled)
 USE_REDUCE_LR="1"
-USE_CUSTOM_GRAD="0"
+USE_CUSTOM_GRAD="1"
 USE_NORM_GRAD="1"
-USE_DIFFFR="0"
+USE_DIFFFR="1"
 
 # Grid configuration initialized from run_simulation_diff.py defaults:
 #   vx_min=0, vx_max=30, vx_samples=4
