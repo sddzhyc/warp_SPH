@@ -395,7 +395,7 @@ class SimSPH_diff(SimSPH):
 
     def step(self, t):
             self.time_step = t
-            current_tape = self.tapes[-1]
+            current_tape = self.tapes[-1] if len(self.tapes) > 0 else None
             # use state at time t as input, write results to time t+1
             x_in = self.x_arrays[t]
             # wp.copy(x_out, x_in)
@@ -448,7 +448,37 @@ class SimSPH_diff(SimSPH):
                 g = wp.vec3(0.0, self.gravity, 0.0)
 
                 if self.num_articulated_joints <= 0 or self.articulated_joints is None:
-                    with current_tape:
+                    if current_tape is not None:
+                        with current_tape:
+                            wp.launch(
+                                kernel=solve_rigid_body_diff,
+                                dim=self.num_objects,
+                                inputs=[
+                                    self.rigid_x_arrays[t],
+                                    self.rigid_v_arrays[t],
+                                    self.rigid_force_arrays[t],
+                                    self.rbs.rigid_mass,
+                                    self.rigid_quaternion_arrays[t],
+                                    self.rbs.rigid_quaternion0,
+                                    self.rigid_omega_arrays[t],
+                                    self.rigid_torque_arrays[t],
+                                    self.rbs.rigid_inertia0,
+                                    self.rigid_inv_inertia_arrays[t],
+                                    g,
+                                    self.dt,
+                                ],
+                                outputs=[
+                                    self.rigid_x_arrays[t+1],
+                                    self.rigid_v_arrays[t+1],
+                                    self.rigid_force_arrays[t+1],
+                                    self.rigid_quaternion_arrays[t+1],
+                                    self.rigid_omega_arrays[t+1],
+                                    self.rigid_torque_arrays[t+1],
+                                    self.rigid_inertia_arrays[t+1],
+                                    self.rigid_inv_inertia_arrays[t+1],
+                                ],
+                            )
+                    else:
                         wp.launch(
                             kernel=solve_rigid_body_diff,
                             dim=self.num_objects,
@@ -479,7 +509,88 @@ class SimSPH_diff(SimSPH):
                         )
 
                 else:
-                    with current_tape:
+                    if current_tape is not None:
+                        with current_tape:
+                            wp.launch(
+                                kernel=integrate_rigid_velocity_diff,
+                                dim=self.num_objects,
+                                inputs=[
+                                    self.rigid_v_arrays[t],
+                                    self.rigid_omega_arrays[t],
+                                    self.rigid_force_arrays[t],
+                                    self.rigid_torque_arrays[t],
+                                    self.rbs.rigid_mass,
+                                    self.rbs.rigid_inv_mass,
+                                    self.rigid_inv_inertia_arrays[t],
+                                    g,
+                                    self.dt,
+                                ],
+                                outputs=[
+                                    self.rigid_v_for_joint_arrays[t+1],
+                                    self.rigid_omega_for_joint_arrays[t+1],
+                                ],
+                            )
+
+                            self.rigid_delta_v_arrays[t+1].zero_()
+                            self.rigid_delta_omega_arrays[t+1].zero_()
+
+                            wp.launch(
+                                kernel=solve_articulated_joints_impulse_inplace,
+                                dim=self.num_articulated_joints,
+                                inputs=[
+                                    self.rigid_x_arrays[t],
+                                    self.rigid_quaternion_arrays[t],
+                                    self.rbs.rigid_quaternion0,
+                                    self.rbs.rigid_inv_mass,
+                                    self.rigid_inv_inertia_arrays[t],
+                                    self.articulated_joints,
+                                    self.num_objects,
+                                    self.num_articulated_joints,
+                                    self.dt,
+                                ],
+                                outputs=[
+                                    self.rigid_delta_v_arrays[t+1],
+                                    self.rigid_delta_omega_arrays[t+1],
+                                ],
+                            )
+
+                            wp.launch(
+                                kernel=compose_joint_velocity_from_delta,
+                                dim=self.num_objects,
+                                inputs=[
+                                    self.rigid_v_for_joint_arrays[t+1],
+                                    self.rigid_omega_for_joint_arrays[t+1],
+                                    self.rigid_delta_v_arrays[t+1],
+                                    self.rigid_delta_omega_arrays[t+1],
+                                ],
+                                outputs=[
+                                    self.rigid_v_arrays[t+1],
+                                    self.rigid_omega_arrays[t+1],
+                                ],
+                            )
+
+                            wp.launch(
+                                kernel=integrate_rigid_pose_diff_inplace,
+                                dim=self.num_objects,
+                                inputs=[
+                                    self.rigid_x_arrays[t],
+                                    self.rigid_v_arrays[t+1],
+                                    self.rigid_quaternion_arrays[t],
+                                    self.rbs.rigid_quaternion0,
+                                    self.rigid_omega_arrays[t+1],
+                                    self.rbs.rigid_inertia0,
+                                    self.dt,
+                                ],
+                                outputs=[
+                                    self.rigid_x_arrays[t+1],
+                                    self.rigid_force_arrays[t+1],
+                                    self.rigid_quaternion_arrays[t+1],
+                                    self.rigid_torque_arrays[t+1],
+                                    self.rigid_inertia_arrays[t+1],
+                                    self.rigid_inv_inertia_arrays[t+1],
+                                ],
+                            )
+                    else:
                         wp.launch(
                             kernel=integrate_rigid_velocity_diff,
                             dim=self.num_objects,
@@ -560,7 +671,23 @@ class SimSPH_diff(SimSPH):
                             ],
                         )
 
-                with current_tape:
+                if current_tape is not None:
+                    with current_tape:
+                        wp.launch(
+                            kernel=update_rigid_particle_info_diff,
+                            dim=self.particle_max_num,
+                            inputs=[x_out, v_out, self.x_0,
+                                self.object_id,
+                                self.materialMarks,
+                                self.rbs.rigid_rest_cm,
+                                self.rigid_x_arrays[t+1],
+                                self.rigid_quaternion_arrays[t+1],
+                                self.rbs.rigid_quaternion0,
+                                self.rigid_v_arrays[t+1],
+                                self.rigid_omega_arrays[t+1],
+                            ]
+                        )
+                else:
                     wp.launch(
                         kernel=update_rigid_particle_info_diff,
                         dim=self.particle_max_num,
@@ -581,7 +708,7 @@ class SimSPH_diff(SimSPH):
             # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
 
     def sub_step(self, t):
-        current_tape = self.tapes[-1]
+        current_tape = self.tapes[-1] if len(self.tapes) > 0 else None
         x_in = self.x_arrays[t]
         v_in = self.v_arrays[t]
         v_out = self.v_arrays[t+1]
@@ -664,7 +791,55 @@ class SimSPH_diff(SimSPH):
                 ],
                 outputs=[self.a_arrays[t]]
             )
-        with current_tape:                
+        if current_tape is not None:
+            with current_tape:
+                with wp.ScopedTimer("compute rigid force and torque", active=self.verbose):
+                    wp.launch(
+                        kernel=compute_rigid_force_torque,
+                        dim=self.particle_max_num,
+                        inputs=[
+                            self.grid.id,
+                            self.x_arrays[t],
+                            self.v_arrays[t],
+                            rho_out,
+                            pressure_out,
+                            self.base_density,
+                            1.0,  # cubic kernel don't need normalization
+                            self.smoothing_length,
+                            self.materialMarks,
+                            self.m_V,
+                            self.object_id,
+                            self.debug_val_arrays[t],
+                            self.rigid_x_arrays[t],
+                            self.use_custom_grad,
+                        ],
+                        outputs=[
+                            self.rigid_force_arrays[t],
+                            self.rigid_torque_arrays[t],
+                            self.a_arrays[t],
+                        ],
+                    )
+
+                with wp.ScopedTimer("advection", active=self.verbose):
+                    # kick
+                    wp.launch(
+                        kernel=kick,
+                        dim=self.particle_max_num,
+                        inputs=[self.a_arrays[t], self.dt, self.v_arrays[t]],
+                        outputs=[self.v_arrays[t+1]],
+                    )
+
+                    # drift
+                    wp.launch(
+                        kernel=drift,
+                        dim=self.particle_max_num,
+                        inputs=[self.x_arrays[t], self.v_arrays[t+1], self.dt],
+                        outputs=[self.x_arrays[t+1]],
+                    )
+
+            # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
+        else:
+            # No tape: run kernels without recording into a tape
             with wp.ScopedTimer("compute rigid force and torque", active=self.verbose):
                 wp.launch(
                     kernel=compute_rigid_force_torque,
@@ -688,11 +863,10 @@ class SimSPH_diff(SimSPH):
                     outputs=[
                         self.rigid_force_arrays[t],
                         self.rigid_torque_arrays[t],
-                        self.a_arrays[t]]
+                        self.a_arrays[t]],
                 )
 
             with wp.ScopedTimer("advection", active=self.verbose):
-                # kick
                 wp.launch(
                     kernel=kick,
                     dim=self.particle_max_num,
@@ -700,7 +874,6 @@ class SimSPH_diff(SimSPH):
                     outputs=[self.v_arrays[t+1]]
                 )
 
-                # drift
                 wp.launch(
                     kernel=drift,
                     dim=self.particle_max_num,
@@ -708,7 +881,6 @@ class SimSPH_diff(SimSPH):
                     outputs=[self.x_arrays[t+1]]
                 )
 
-            # print(f"self.rigid_quaternion_arrays[{t}]:", self.rigid_quaternion_arrays[t].numpy()[1])
         # with wp.ScopedTimer("render"):
         #     self.renderer.begin_frame(self.sim_time)
         #     self.renderer.render_points(
