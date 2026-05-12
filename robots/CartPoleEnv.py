@@ -3,7 +3,9 @@ import os
 import numpy as np
 import torch
 import warp as wp
-from utils import export_backward_data
+from fluid_encoder.encoder_utils import get_local_fluid_grid_around_rigid
+from rigid_fluid_coupling import MaterialType
+from utils import export_backward_data, save_fluid_velocity_field
 
 @wp.kernel
 def add_control_delta_v_kernel(
@@ -17,7 +19,7 @@ def add_control_delta_v_kernel(
         # rigid_v[rigid_id] = rigid_v[rigid_id] + delta_v[0] TODO: 临时直接设置速度增量，后续改为叠加
 
 class DifferentiableCartPoleEnv:
-    def __init__(self, sim, control_interval, backward_interval, control_start_step=2, include_time=True, norm_grad=False):
+    def __init__(self, sim, control_interval, backward_interval, control_start_step=2, include_time=True, norm_grad=False, total_sim_steps=None):
         self.sim = sim
         self.control_interval = int(control_interval)
         self.backward_interval = int(backward_interval)
@@ -36,11 +38,19 @@ class DifferentiableCartPoleEnv:
         self.car_rigid_id = int(getattr(sim.task, "car_rigid_id", 2))
 
         self.action_records = []
-        self.total_sim_steps = 0
+        self.total_sim_steps = int(total_sim_steps) if total_sim_steps is not None else 0
         self.export_before_diff_reset = False
         self.export_output_interval = 10
         self.export_series_prefix = None
         self.export_ply_counter = 0
+        self.export_fluid_field = False
+        self.export_fluid_field_dir = None
+        self.export_fluid_field_launch_time = None
+        self.export_fluid_field_counter = 0
+        self.export_fluid_field_grid_shape = (32, 32, 32)
+        self.export_fluid_field_grid_spacing = 0.02
+        self.export_fluid_field_influence_radius = None
+        self.last_segment_steps = 0
 
     def reset_episode(self):
         self.sim.clear_grad()
@@ -48,6 +58,13 @@ class DifferentiableCartPoleEnv:
 
         self.action_records = []
         self.export_ply_counter = 0
+        self.export_fluid_field_counter = 0
+
+    def set_total_sim_steps(self, total_sim_steps):
+        total_sim_steps = int(total_sim_steps)
+        if total_sim_steps <= 0:
+            raise ValueError("total_sim_steps must be > 0")
+        self.total_sim_steps = total_sim_steps
 
     def should_control(self, step):
         if step < self.control_start_step:
@@ -84,6 +101,51 @@ class DifferentiableCartPoleEnv:
         state_parts.append(t)
 
         return np.asarray(state_parts, dtype=np.float32)
+
+    def _get_fluid_particles(self, step):
+        pos_all = self.sim.x_arrays[step].numpy()
+        vel_all = self.sim.v_arrays[step].numpy()
+
+        if hasattr(self.sim, "materialMarks") and hasattr(self.sim.materialMarks, "material") and self.sim.materialMarks.material is not None:
+            mat = self.sim.materialMarks.material.numpy()
+            mask = (mat == int(MaterialType.FLUID))
+            if np.any(mask):
+                return pos_all[mask], vel_all[mask]
+
+        fluid_num = int(getattr(self.sim, "fluid_particle_num", 0))
+        if fluid_num > 0:
+            return pos_all[:fluid_num], vel_all[:fluid_num]
+
+        return pos_all, vel_all
+
+    def get_fluid_velocity_field(self, step, grid_shape=None, grid_spacing=None, influence_radius=None):
+        if grid_shape is None:
+            grid_shape = self.export_fluid_field_grid_shape
+        if grid_spacing is None:
+            grid_spacing = self.export_fluid_field_grid_spacing
+        if influence_radius is None:
+            influence_radius = self.export_fluid_field_influence_radius
+
+        rigid_center = self.sim.rigid_x_arrays[step].numpy()[self.car_rigid_id].astype(np.float32)
+        particle_pos, particle_vel = self._get_fluid_particles(step)
+        velocity_field, weight = get_local_fluid_grid_around_rigid(
+            particle_pos=particle_pos,
+            particle_vel=particle_vel,
+            rigid_center=rigid_center,
+            grid_shape=tuple(grid_shape),
+            grid_spacing=float(grid_spacing),
+            influence_radius=influence_radius,
+        )
+        metadata = {
+            "step": int(step),
+            "time": float(step) * float(self.sim.frame_dt),
+            "rigid_center": rigid_center.astype(np.float32),
+            "grid_shape": np.asarray(tuple(grid_shape), dtype=np.int32),
+            "grid_spacing": np.asarray(float(grid_spacing), dtype=np.float32),
+        }
+        if influence_radius is not None:
+            metadata["influence_radius"] = np.asarray(float(influence_radius), dtype=np.float32)
+        return velocity_field, weight, metadata
 
     def _action_to_wp_vec3(self, action_xyz):
         target_device = torch.device(str(self.sim.rigid_v_arrays[0].device))
@@ -232,7 +294,7 @@ class DifferentiableCartPoleEnv:
                 print(
                     f"[action step] step={record['step']} time={record['time']} "
                     f"rod_quat={record['rod_quat']} action={record['action']} "
-                    f"grad={grad_vec}"
+                    f"grad={record['grad']}"
                 )
 
                 if collect_replay:
@@ -333,7 +395,7 @@ class DifferentiableCartPoleEnv:
             loss_tape.backward(self.sim.loss)
 
             action_grad_norms = []
-
+            records = []
             for local_t in reversed(range(backward_steps)):
                 self._normalize_step_state_grads(local_t)
                 step_tapes[local_t].backward()
@@ -358,16 +420,19 @@ class DifferentiableCartPoleEnv:
                 action_grad_norms.append(float(torch.linalg.norm(grad_tensor).item()))
                 record["grad"] = grad_vec.copy()
 
-                print(
-                    f"[action step] step={record['step']} time={record['time']} "
-                    f"rod_quat={record['rod_quat']} action={record['action']} "
-                    f"grad={grad_vec}"
-                )
+                records.append(record)
 
                 if grad_callback is not None:
                     grad_callback(action_torch, grad_tensor, record)
 
                 torch.autograd.backward([action_torch], grad_tensors=[grad_tensor])
+
+            for i in reversed(records):
+                print(
+                    f"[action step] step={i['step']} time={i['time']} "
+                    f"rod_quat={i['rod_quat']} action={i['action']} "
+                    f"grad={i['grad']}"
+                )
 
         loss_val = float(np.asarray(self.sim.loss.numpy()).reshape(-1)[0])
         avg_action_grad_norm = float(np.mean(np.asarray(action_grad_norms, dtype=np.float32))) if action_grad_norms else 0.0
@@ -453,8 +518,9 @@ class DifferentiableCartPoleEnv:
         grad_callback=None,
     ):
         self.reset_episode()
-        total_sim_steps = int(self.sim.sim_steps)
-        self.total_sim_steps = total_sim_steps
+        total_sim_steps = int(self.total_sim_steps)
+        if total_sim_steps <= 0:
+            raise ValueError("total_sim_steps must be set on env before rollout")
 
         diff_horizon = self.backward_interval * self.control_interval
         if diff_horizon <= 0:
@@ -534,8 +600,6 @@ class DifferentiableCartPoleEnv:
 
             self.sim.diff_reset(backward_steps)
 
-        self.sim.sim_steps = total_sim_steps
-
         final_loss = float(segment_losses[-1]) if segment_losses else 0.0
         avg_action_grad_norm = float(np.mean(np.asarray(segment_action_grad_norms, dtype=np.float32))) if segment_action_grad_norms else 0.0
 
@@ -550,39 +614,103 @@ class DifferentiableCartPoleEnv:
             "action_grad_tensors": rollout_action_grad_tensors,
         }
 
-    def rollout_forward_only(self, controller):
+    def rollout_forward_only(self, controller, total_sim_steps=None):
         self.reset_episode()
 
         control_count = 0
         action_records = []
+        if total_sim_steps is None:
+            total_sim_steps = int(self.total_sim_steps)
+        else:
+            total_sim_steps = int(total_sim_steps)
+        diff_horizon = self.backward_interval * self.control_interval
+        if diff_horizon <= 0:
+            raise ValueError("backward_interval must be > 0")
+
+        if total_sim_steps <= 0:
+            raise ValueError("total_sim_steps must be > 0")
+
+        self.last_segment_steps = 0
 
         controller.eval()
+        global_step = 0
+
         with torch.no_grad():
-            for t in range(self.sim.sim_steps):
-                if self.should_control(t):
-                    state_np = self.get_state(t)
-                    action_torch = controller(state_np).reshape(-1)
-                    action_wp = self._action_to_wp_vec3(action_torch)
+            while global_step < total_sim_steps:
+                backward_steps = min(diff_horizon, total_sim_steps - global_step)
+                self.sim.sim_steps = backward_steps
+                self.last_segment_steps = backward_steps
 
-                    rod_quat = self.sim.rigid_quaternion_arrays[t].numpy()[self.rod_rigid_id].copy()
-                    current_time = float(t) * float(self.sim.frame_dt)
+                if global_step == 0:
+                    self.sim.task.init_simulation_state()
 
-                    self.apply_action(t, action_wp, tape=None)
+                for local_t in range(backward_steps):
+                    global_t = global_step + local_t
+                    if self.should_control(global_t):
+                        state_np = self.get_state(local_t)
+                        action_torch = controller(state_np).reshape(-1)
+                        action_wp = self._action_to_wp_vec3(action_torch)
 
-                    action_records.append(
-                        {
-                            "step": t,
-                            "time": current_time,
-                            "rod_quat": rod_quat,
-                            "action": action_torch.detach().cpu().numpy().astype(np.float32),
-                        }
-                    )
-                    control_count += 1
+                        if self.export_fluid_field:
+                            velocity_field, weight, metadata = self.get_fluid_velocity_field(local_t)
+                            launch_time_tag = self.export_fluid_field_launch_time or "launch_unknown"
+                            current_time_tag = f"t{float(metadata['time']):.6f}".replace("-", "m")
+                            fluid_field_name = f"{launch_time_tag}_{current_time_tag}.npz"
+                            fluid_field_dir = self.export_fluid_field_dir
+                            fluid_field_path = os.path.join(fluid_field_dir, fluid_field_name) if fluid_field_dir else fluid_field_name
+                            save_fluid_velocity_field(
+                                fluid_field_path,
+                                velocity_field,
+                                weight=weight,
+                                metadata=metadata,
+                            )
 
-                self.sim.step(t)
+                        rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
+                        current_time = float(global_t) * float(self.sim.frame_dt)
+
+                        self.apply_action(local_t, action_wp, tape=None)
+
+                        action_records.append(
+                            {
+                                "step": global_t,
+                                "time": current_time,
+                                "rod_quat": rod_quat,
+                                "action": action_torch.detach().cpu().numpy().astype(np.float32),
+                            }
+                        )
+                        control_count += 1
+
+                    self.sim.step(local_t)
+
+                global_step += backward_steps
+                if global_step < total_sim_steps:
+                    if self.export_before_diff_reset and self.export_series_prefix:
+                        seg_output_interval = max(1, int(self.export_output_interval))
+                        seg_series_prefix = self.export_series_prefix
+
+                        seg_dir = os.path.dirname(seg_series_prefix)
+                        if seg_dir:
+                            os.makedirs(seg_dir, exist_ok=True)
+
+                        print(
+                            f"[rollout] export diff_segment (test): steps={backward_steps}, "
+                            f"output_interval={seg_output_interval}, prefix={seg_series_prefix}"
+                        )
+                        self.export_ply_counter = export_backward_data(
+                            self.sim,
+                            backward_steps,
+                            seg_output_interval,
+                            seg_series_prefix,
+                            start_cnt=self.export_ply_counter,
+                        )
+                    self.sim.diff_reset(backward_steps)
 
         try:
-            self.sim.task.compute_loss(end_step=self.sim.sim_steps)
+            # compute_loss expects an index within the simulator's per-segment buffers.
+            # Use the last simulated segment length (self.last_segment_steps) to avoid
+            # indexing beyond the allocated arrays when the full trajectory is larger
+            # than the per-segment buffers.
+            self.sim.task.compute_loss(end_step=self.last_segment_steps)
         except TypeError:
             self.sim.task.compute_loss()
 

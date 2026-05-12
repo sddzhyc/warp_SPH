@@ -145,7 +145,19 @@ class CarPoleOnWaterTask(Task):
         if self.sim.num_objects <= 0:
             return
 
-        with self.sim.tapes[-1]:
+        current_tape = self.sim.tapes[-1] if hasattr(self.sim, "tapes") and len(self.sim.tapes) > 0 else None
+        if current_tape is not None:
+            with current_tape:
+                wp.launch(
+                    kernel=assign_car_init_velocity_kernel,
+                    dim=1,
+                    inputs=[
+                        self.opt_rigid_v,
+                        self.car_rigid_id,
+                    ],
+                    outputs=[self.sim.rigid_v_arrays[0]],
+                )
+        else:
             wp.launch(
                 kernel=assign_car_init_velocity_kernel,
                 dim=1,

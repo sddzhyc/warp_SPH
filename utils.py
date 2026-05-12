@@ -1,6 +1,8 @@
 import datetime
 import os
 
+import numpy as np
+
 from SimSPH import HASH_GRID_SIZE_SCALE
 from kernel_func import custom_grad_scale, custom_h_scale, use_const_2order_grad
 
@@ -12,6 +14,27 @@ def export_backward_data(sim, sim_steps, output_interval, series_prefix, start_c
             sim.export_ply_from_diff(f"{series_prefix}", time_step, cnt_ply)
             cnt_ply += 1
     return cnt_ply
+
+
+def save_fluid_velocity_field(file_path, velocity_field, weight=None, metadata=None):
+    file_dir = os.path.dirname(file_path)
+    if file_dir:
+        os.makedirs(file_dir, exist_ok=True)
+
+    payload = {
+        "velocity_field": np.asarray(velocity_field, dtype=np.float32),
+    }
+
+    if weight is not None:
+        payload["weight"] = np.asarray(weight, dtype=np.float32)
+
+    if metadata:
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            payload[key] = np.asarray(value)
+
+    np.savez_compressed(file_path, **payload)
 
 
 def build_grad_mode_info(args):
