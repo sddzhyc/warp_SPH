@@ -1,20 +1,39 @@
 # pyright: reportInvalidTypeForm=false
 import argparse
+import datetime
 import os
 
 import numpy as np
 import torch
+import math
 import tensorboardX
 import warp as wp
 
 from robots.CartPoleEnv import DifferentiableCartPoleEnv
+from robots.FishEnv import DifferentiableFishEnv
 from config_builder import SimConfig
 from SimSPH_diff import SimSPH_diff
 from SimDFSPH_diff import SimDFSPH_diff
 from SimDFSPH_diff_no_fluid_tape import SimDFSPH_diff as SimDFSPH_diff_no_fluid_tape
+from rigid_fluid_coupling import MaterialType
 from robots.grad_replay_buffer import GradReplayBuffer
 from robots.controller import Controller
-from utils import export_backward_data, build_export_settings, build_default_log_dir, build_checkpoint_dir, build_controller_run_tag
+from robots.controller_with_fluid import ControllerWithFluid
+from fluid_encoder.ae_CNN_3d_pytorch import AutoEncoder3D
+from fluid_encoder.encoder_utils import get_local_fluid_grid_around_rigid, normalize_fluid_field
+from utils import export_backward_data, build_export_settings, build_default_log_dir, build_checkpoint_dir, build_controller_run_tag, save_fluid_velocity_field
+
+GRID_SHAPE = (64, 32, 32)
+LOCAL_FLUID_GRID_CELL_SIZE = 0.03
+
+
+def _resolve_local_fluid_grid_shape(config, cell_size=None):
+    if cell_size is None:
+        cell_size = float(LOCAL_FLUID_GRID_CELL_SIZE)
+    _ = config
+    grid_shape = np.asarray(GRID_SHAPE, dtype=np.int32)
+    local_extent = grid_shape.astype(np.float32) * float(cell_size)
+    return tuple(int(v) for v in grid_shape.tolist()), local_extent, float(cell_size)
 
 
 
@@ -73,6 +92,198 @@ def _get_sim_state(sim, step, include_time):
     return np.asarray(state_parts, dtype=np.float32)
 
 
+def _get_fluid_particles_from_step(sim, step):
+    pos_all = sim.x_arrays[step].numpy()
+    vel_all = sim.v_arrays[step].numpy()
+
+    # Prefer explicit material tags when available; fallback to front fluid range.
+    if hasattr(sim, "materialMarks") and hasattr(sim.materialMarks, "material") and sim.materialMarks.material is not None:
+        mat = sim.materialMarks.material.numpy()
+        mask = (mat == int(MaterialType.FLUID))
+        if np.any(mask):
+            return pos_all[mask], vel_all[mask]
+
+    fluid_num = int(getattr(sim, "fluid_particle_num", 0))
+    if fluid_num > 0:
+        return pos_all[:fluid_num], vel_all[:fluid_num]
+
+    return pos_all, vel_all
+
+
+def _save_particles_ply(file_path, positions, velocities):
+    """Save particle positions and velocities as an ASCII PLY point cloud.
+
+    Houdini can import PLY point clouds. We write x,y,z and vx,vy,vz per vertex.
+    """
+    positions = np.asarray(positions, dtype=np.float32)
+    velocities = np.asarray(velocities, dtype=np.float32)
+    assert positions.shape[0] == velocities.shape[0]
+    n = positions.shape[0]
+    with open(file_path, "w") as f:
+        f.write("ply\n")
+        f.write("format ascii 1.0\n")
+        f.write(f"element vertex {n}\n")
+        f.write("property float x\n")
+        f.write("property float y\n")
+        f.write("property float z\n")
+        f.write("property float vx\n")
+        f.write("property float vy\n")
+        f.write("property float vz\n")
+        f.write("end_header\n")
+        for i in range(n):
+            x, y, z = positions[i]
+            vx, vy, vz = velocities[i]
+            f.write(f"{x} {y} {z} {vx} {vy} {vz}\n")
+
+
+def _build_local_fluid_grid(sim, step, grid_shape, grid_spacing, influence_radius):
+    car_rigid_id = int(getattr(sim.task, "car_rigid_id", 2))
+    rigid_center = sim.rigid_x_arrays[step].numpy()[car_rigid_id]
+    particle_pos, particle_vel = _get_fluid_particles_from_step(sim, step)
+    vel_grid, _ = get_local_fluid_grid_around_rigid(
+        particle_pos=particle_pos,
+        particle_vel=particle_vel,
+        rigid_center=rigid_center,
+        grid_shape=grid_shape,
+        grid_spacing=float(grid_spacing),
+        influence_radius=influence_radius,
+    )
+    return vel_grid
+
+
+
+def _encode_local_fluid_grid(ae_model, vel_grid, device):
+    # Input shape expected by 3D AE: (B, C, D, H, W)
+    grid_norm = normalize_fluid_field(vel_grid[None, ...])[0]
+    ae_in = torch.as_tensor(grid_norm[None, ...], dtype=torch.float32, device=device)
+    with torch.no_grad():
+        feat = ae_model.encode(ae_in).reshape(-1)
+    return feat
+
+
+class FluidAEPolicyAdapter(torch.nn.Module):
+    """Wraps ControllerWithFluid to keep Env API controller(state)->action unchanged."""
+
+    def __init__(self, sim, base_controller, ae_model, grid_shape, grid_spacing, influence_radius):
+        super().__init__()
+        self.sim = sim
+        self.base_controller = base_controller
+        self.ae_model = ae_model
+        self.grid_shape = tuple(grid_shape)
+        self.grid_spacing = float(grid_spacing)
+        self.influence_radius = influence_radius
+
+    def _controller_device(self):
+        try:
+            return next(self.base_controller.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    def _infer_step_from_state(self, state_1d):
+        # We require time feature in state to align local step index per rollout segment.
+        t = float(state_1d[-1].detach().cpu().item())
+        dt = float(self.sim.frame_dt)
+        if dt <= 0:
+            return 0
+        step = int(np.round(t / dt))
+        step = max(0, min(step, len(self.sim.x_arrays) - 1))
+        return step
+
+    def forward(self, state):
+        s = torch.as_tensor(state, dtype=torch.float32, device=self._controller_device())
+        if s.dim() != 1:
+            raise ValueError("FluidAEPolicyAdapter.forward expects a 1D state vector")
+
+        step = self._infer_step_from_state(s)
+        vel_grid = _build_local_fluid_grid(
+            sim=self.sim,
+            step=step,
+            grid_shape=self.grid_shape,
+            grid_spacing=self.grid_spacing,
+            influence_radius=self.influence_radius,
+        )
+        ae_feat = _encode_local_fluid_grid(self.ae_model, vel_grid, self._controller_device())
+        return self.base_controller(s, ae_feat)
+
+
+def _build_policy_controller(sim, args):
+    if not args.use_fluid:
+        return Controller()
+
+    if not args.time_in_state:
+        raise ValueError("use_fluid requires --time_in_state so controller can map state time to local simulation step")
+    if not args.encoder_path:
+        raise ValueError("use_fluid requires --encoder_path")
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # Load checkpoint first and infer latent channel count from its encoder conv weights.
+    ae_state = torch.load(args.encoder_path, map_location=device)
+    ae_model = AutoEncoder3D(in_channels=3,).to(device)
+    try:
+        ae_model.load_state_dict(ae_state)
+    except Exception:
+        # fall back to non-strict load to allow minor key mismatches
+        ae_model.load_state_dict(ae_state, strict=False)
+    ae_model.eval()
+    for p in ae_model.parameters():
+        p.requires_grad_(False)
+
+    grid_shape = tuple(getattr(args, "fluid_grid_shape", (32, 32, 32)))
+    grid_spacing = float(getattr(args, "fluid_grid_spacing", LOCAL_FLUID_GRID_CELL_SIZE))
+
+    sample_grid = _build_local_fluid_grid(
+        sim=sim,
+        step=0,
+        grid_shape=grid_shape,
+        grid_spacing=grid_spacing,
+        influence_radius=args.fluid_influence_radius,
+    )
+    sample_feat = _encode_local_fluid_grid(ae_model, sample_grid, device)
+    state_dim = int(_get_sim_state(sim, step=0, include_time=True).shape[0])
+    action_dim = 3
+
+    base_controller = ControllerWithFluid(
+        state_dim=state_dim,
+        ae_feat_dim=int(sample_feat.numel()),
+        action_dim=action_dim,
+    ).to(device)
+    wrapped = FluidAEPolicyAdapter(
+        sim=sim,
+        base_controller=base_controller,
+        ae_model=ae_model,
+        grid_shape=grid_shape,
+        grid_spacing=grid_spacing,
+        influence_radius=args.fluid_influence_radius,
+    )
+    return wrapped
+
+
+def _make_env_for_sim(sim, args, sim_steps):
+    """Return appropriate Differentiable env for the given simulator task."""
+    # choose FishEnv when task is FishTask
+    task = getattr(sim, "task", None)
+    use_fish = False
+    if task is not None:
+        name = task.__class__.__name__
+        if name == "FishTask" or "fish" in name.lower():
+            use_fish = True
+
+    EnvCls = DifferentiableFishEnv if use_fish else DifferentiableCartPoleEnv
+    env = EnvCls(
+        sim=sim,
+        control_interval=args.control_interval,
+        backward_interval=args.backward_interval,
+        control_start_step=args.control_start_step,
+        include_time=args.time_in_state,
+        norm_grad=args.norm_grad,
+        total_sim_steps=sim_steps,
+    )
+    return env
+
+
+
+
+
 def _log_first_segment_step_grads(writer, sim, env):
     if writer is None:
         return
@@ -127,14 +338,7 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    env = DifferentiableCartPoleEnv(
-        sim=sim,
-        control_interval=args.control_interval,
-        backward_interval=args.backward_interval,
-        control_start_step=args.control_start_step,
-        include_time=args.time_in_state,
-        norm_grad=args.norm_grad,
-    )
+    env = _make_env_for_sim(sim, args, sim_steps)
 
     if export_settings is not None:
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
@@ -142,9 +346,11 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
         env.export_output_interval = int(output_interval)
         env.export_series_prefix = series_prefix
 
-    controller = Controller()
+    controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+    # optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     writer = None
     if args.log_dir:
@@ -175,6 +381,12 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             loss_threshold=args.loss_threshold,
         )
 
+        # step scheduler once per epoch (env.rollout handles internal optimizer steps)
+        if scheduler is not None:
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"[LR] Current LR: {current_lr:.6e}")
+
         loss_val = rollout_stats["loss"]
         last_loss_val = loss_val
         action_grad_norm = rollout_stats["action_grad_norm"]
@@ -190,6 +402,7 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
 
         if writer is not None:
             writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Control/count", float(control_count), epoch)
             writer.add_scalar("Backward/segments", float(segment_count), epoch)
@@ -217,14 +430,7 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    env = DifferentiableCartPoleEnv(
-        sim=sim,
-        control_interval=args.control_interval,
-        backward_interval=args.backward_interval,
-        control_start_step=args.control_start_step,
-        include_time=args.time_in_state,
-        norm_grad=args.norm_grad,
-    )
+    env = _make_env_for_sim(sim, args, sim_steps)
 
     if export_settings is not None:
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
@@ -234,9 +440,10 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
     else:
         output_ply, series_prefix = False, None
 
-    controller = Controller()
+    controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     writer = None
     if args.log_dir:
@@ -267,6 +474,18 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
             loss_threshold=args.loss_threshold,
         )
 
+        # advance scheduler once per epoch and log current LR
+        try:
+            scheduler.step()
+        except Exception:
+            pass
+        current_lr = None
+        try:
+            current_lr = scheduler.get_last_lr()[0]
+        except Exception:
+            current_lr = _get_current_lr(optimizer)
+        print(f"[LR] Current LR: {current_lr:.6e}")
+
         loss_val = rollout_stats["loss"]
         last_loss_val = loss_val
         action_grad_norm = rollout_stats["action_grad_norm"]
@@ -280,6 +499,7 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
 
         if writer is not None:
             writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Control/count", float(control_count), epoch)
             writer.add_scalar("Backward/segments", float(segment_count), epoch)
@@ -309,8 +529,25 @@ def _get_controller_device(controller):
     except StopIteration:
         return torch.device("cpu")
 
+def _get_current_lr(optimizer):
+    if not optimizer.param_groups:
+        return float("nan")
+    return float(optimizer.param_groups[0].get("lr", float("nan")))
 
-def _replay_update_controller(controller, optimizer, replay_buffer, batch_size, updates_per_iter, grad_clip_norm):
+def build_lr_scheduler(optimizer, args):
+    total_steps = max(1, int(args.iters) * 1)
+    warmup_steps = int(0.05 * total_steps)
+
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return float(step + 1) / float(max(1, warmup_steps))
+        progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+
+def _replay_update_controller(controller, optimizer, replay_buffer, batch_size, updates_per_iter, grad_clip_norm, scheduler=None):
     if len(replay_buffer) == 0:
         return 0.0, 0
 
@@ -332,6 +569,11 @@ def _replay_update_controller(controller, optimizer, replay_buffer, batch_size, 
         if grad_clip_norm is not None and grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(optimizer.param_groups[0]["params"], grad_clip_norm)
         optimizer.step()
+        if scheduler is not None:
+            try:
+                scheduler.step()
+            except Exception:
+                pass
 
         update_losses.append(float(surrogate_loss.detach().cpu().item()))
         updates_done += 1
@@ -343,9 +585,13 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    if args.use_fluid:
+        raise ValueError("use_fluid is not supported in sim_backward_controller mode. Use --train_ar instead.")
+
     controller = Controller()
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     if not hasattr(sim, "task") or not hasattr(sim.task, "opt_rigid_v"):
         raise RuntimeError("Current task does not expose opt_rigid_v for SimSPH_diff.backward controller training.")
@@ -400,6 +646,10 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
         if args.grad_clip_norm is not None and args.grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(optimizer.param_groups[0]["params"], args.grad_clip_norm)
         optimizer.step()
+        try:
+            scheduler.step()
+        except Exception:
+            pass
 
         print(
             f"Epoch {epoch:04d} | loss={loss_val:.6e} | one_action_grad_norm={action_grad_norm:.6e} "
@@ -408,6 +658,7 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
 
         if writer is not None:
             writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Action/x", float(action_np[0]), epoch)
             writer.add_scalar("Action/y", float(action_np[1]), epoch)
@@ -428,8 +679,9 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     if export_settings is not None:
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
         if output_ply:
+            export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
             print(f"exporting simulation data in backward to: {series_prefix}")
-            export_backward_data(sim, sim_steps, output_interval, series_prefix)
+            export_backward_data(sim, export_steps, output_interval, series_prefix)
 
     last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
     last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
@@ -444,14 +696,8 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    env = DifferentiableCartPoleEnv(
-        sim=sim,
-        control_interval=args.control_interval,
-        backward_interval=args.backward_interval,
-        control_start_step=args.control_start_step,
-        include_time=args.time_in_state,
-        norm_grad=args.norm_grad,
-    )
+    env = _make_env_for_sim(sim, args, sim_steps)
+    
 
     if export_settings is not None:
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
@@ -459,9 +705,13 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
         env.export_output_interval = int(output_interval)
         env.export_series_prefix = series_prefix
 
+    if args.use_fluid:
+        raise ValueError("use_fluid is not supported in replay_mode. Use --train_ar instead.")
+
     controller = Controller()
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     replay_buffer = GradReplayBuffer(args.replay_capacity)
     state_dim = int(env.get_state(0).shape[0])
@@ -513,6 +763,7 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
                 batch_size=args.replay_batch_size,
                 updates_per_iter=args.replay_updates_per_iter,
                 grad_clip_norm=args.grad_clip_norm,
+                scheduler=scheduler,
             )
 
         print(
@@ -525,6 +776,7 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
             writer.add_scalar("Loss/rollout", rollout_loss, epoch)
             if replay_updates > 0:
                 writer.add_scalar("Loss/replay", replay_loss, epoch)
+            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Control/count", float(control_count), epoch)
             writer.add_scalar("Replay/buffer_size", float(buffer_size), epoch)
@@ -563,25 +815,29 @@ def load_controller_checkpoint(controller, ckpt_path):
 
 
 def test_controller(sim, args, sim_steps, export_settings=None):
-    controller = Controller()
+    controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
 
-    env = DifferentiableCartPoleEnv(
-        sim=sim,
-        control_interval=args.control_interval,
-        backward_interval=args.backward_interval,
-        control_start_step=args.control_start_step,
-        include_time=args.time_in_state,
-        norm_grad=args.norm_grad,
-    )
+    env = _make_env_for_sim(sim, args, sim_steps)
 
-    loss_val, control_count = env.rollout_forward_only(controller)
+    if args.save_fluid_field:
+        os.makedirs(args.fluid_field_out_dir, exist_ok=True)
+        env.export_fluid_field = True
+        env.export_fluid_field_dir = args.fluid_field_out_dir
+        env.export_fluid_field_launch_time = getattr(args, "command_start_time_tag", None)
+        env.export_fluid_field_grid_shape = tuple(getattr(args, "fluid_grid_shape", (32, 32, 32)))
+        env.export_fluid_field_grid_spacing = float(getattr(args, "fluid_grid_spacing", LOCAL_FLUID_GRID_CELL_SIZE))
+        env.export_fluid_field_influence_radius = args.fluid_influence_radius
 
     if export_settings is not None:
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
         if output_ply:
-            print(f"exporting simulation data for test to: {series_prefix}")
-            export_backward_data(sim, sim_steps, output_interval, series_prefix)
+            env.export_before_diff_reset = True
+            env.export_output_interval = int(output_interval)
+            env.export_series_prefix = series_prefix
+            env.export_ply_counter = 0
+
+    loss_val, control_count = env.rollout_forward_only(controller, total_sim_steps=sim_steps)
 
     print(f"Test complete | loss={loss_val:.6e} | controls={control_count}")
 
@@ -594,6 +850,8 @@ def build_simulator(args):
         sim_steps = derive_sim_steps(config, sim_time=args.t)
 
     print(f"Using sim_steps: {sim_steps}")
+    segment_steps = args.backward_interval * args.control_interval + 1
+    print(f"segment_steps: {segment_steps}")
 
     with wp.ScopedDevice(args.device):
         if args.method == 1:
@@ -603,7 +861,7 @@ def build_simulator(args):
                 config,
                 stage_path=args.stage_path,
                 container=None,
-                sim_steps=sim_steps,
+                sim_steps=segment_steps,
                 ply_path=args.ply_path,
                 lr=args.lr,
                 h_scale=args.h_scale,
@@ -617,7 +875,7 @@ def build_simulator(args):
                 config,
                 stage_path=args.stage_path,
                 container=None,
-                sim_steps=sim_steps,
+                sim_steps=segment_steps,
                 ply_path=args.ply_path,
                 lr=args.lr,
                 h_scale=args.h_scale,
@@ -651,7 +909,7 @@ def get_parser():
     parser.add_argument("--seed", type=int, default=12, help="Random seed.")
     parser.add_argument("--grad_clip_norm", type=float, default=None, help="Optional grad clip norm.")
     parser.add_argument("--batch", type=int, default=None, help="Online update batch size for action-gradient application; default 1 when omitted.")
-    parser.add_argument("--sim_backward_controller", action="store_true", help="Train controller using SimSPH_diff.backward with one action gradient per backward call.")
+    parser.add_argument("--use_sim-backward", dest="use_sim_backward", action="store_true", help="Train controller using SimSPH_diff.backward with one action gradient per backward call.")
     parser.add_argument("--replay_mode", action="store_true", help="Train controller from a replay buffer of collected action gradients.")
     parser.add_argument("--replay_capacity", type=int, default=200, help="Maximum number of replay samples to keep.")
     parser.add_argument("--replay_batch_size", type=int, default=64, help="Mini-batch size for replay updates.")
@@ -661,6 +919,23 @@ def get_parser():
     parser.add_argument("--control_interval", type=int, default=1260, help="Control interval in simulation steps.")
     parser.add_argument("--control_start_step", type=int, default=0, help="First step where control is applied.")
     parser.add_argument("--time_in_state", action="store_true", help="Include time feature in state.")
+    parser.add_argument("--scheduler_steps_per_epoch", type=int, default=1, help="Estimated optimizer steps per epoch used by the LR scheduler.")
+    parser.add_argument("--lr_scheduler", action="store_true", help="Enable learning-rate scheduler (off by default).")
+
+    # AE encoded policy options.
+    parser.add_argument("--use_fluid", action="store_true", help="Use local fluid 3D grid encoded by encoder as additional controller input.")
+    parser.add_argument("--encoder_path", type=str, 
+                        default="fluid_encoder/models/20260505_163437/autoencoder_best_test_loss_9.931702e-03.pth", help="Path to AutoEncoder3D checkpoint (.pth/.pkl).")
+    # latent channel count will be inferred from the AE checkpoint when provided
+    # Fluid grid
+    parser.add_argument("--fluid_grid_spacing", type=float, default=LOCAL_FLUID_GRID_CELL_SIZE, help="Uniform world-space cell size of the local fluid grid.")
+    parser.add_argument("--fluid_influence_radius", type=float, default=None, help="Optional particle filter radius around car COM; defaults to grid half-extent norm.")
+    parser.add_argument("--save_fluid_field", action="store_true", help="Save local fluid velocity fields during forward-only rollout.")
+    parser.add_argument("--fluid_field_out_dir", type=str, default="datasets/fluid_grid_dataset", help="Output directory for saved fluid fields.")
+    
+    parser.add_argument("--disable_ply_export", action="store_true", help="Disable PLY export for test_only or collection runs.")
+    parser.add_argument("--train_ar", action="store_true", help="Train controller with fluid AE features (AR mode).")
+    parser.add_argument("--test_ar", action="store_true", help="Test controller with fluid AE features (AR mode).")
 
     parser.add_argument("--log_dir", type=str, default=None, help="TensorBoard log directory.")
     parser.add_argument("--model_path", type=str, default=None, help="Model path used to initialize controller or run test.")
@@ -679,11 +954,24 @@ def get_parser():
 
 def main():
     args = get_parser().parse_args()
+    args.command_start_time_tag = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    if args.train_ar:
+        args.use_fluid = True
+    if args.test_ar:
+        args.use_fluid = True
+        args.test_only = True
+    if args.use_fluid:
+        args.time_in_state = True
 
     sim_time = args.t
     sim, config, sim_steps = build_simulator(args)
     if sim_time is None:
         sim_time = config.get_cfg("end_time")
+
+    args.fluid_grid_shape, args.fluid_grid_extent, args.fluid_grid_spacing = _resolve_local_fluid_grid_shape(
+        config,
+    )
 
     args.backward_interval = int(args.backward_interval)
     if args.backward_interval <= 0:
@@ -692,6 +980,9 @@ def main():
     run_tag = build_controller_run_tag(args)
 
     export_settings = build_export_settings(args, config, end_time=sim_time)
+    if args.disable_ply_export and export_settings is not None:
+        output_ply, output_obj, output_interval, series_prefix, frame_time, scene_name_with_grad_mode = export_settings
+        export_settings = (False, output_obj, output_interval, series_prefix, frame_time, scene_name_with_grad_mode)
 
     ckpt_dir = os.path.join(build_checkpoint_dir(args, end_time=sim_time), backward_interval_tag, run_tag)
 
@@ -705,7 +996,7 @@ def main():
 
     if args.test_only:
         test_controller(sim, args, sim_steps, export_settings=export_settings)
-    elif args.sim_backward_controller:
+    elif args.use_sim_backward:
         train_controller_with_sim_backward(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
     elif args.replay_mode:
         train_controller_with_replay(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)

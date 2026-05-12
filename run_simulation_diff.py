@@ -258,6 +258,26 @@ def run_training(sim, args, log_dir=None, enable_writer=True):
     if writer is not None:
         writer.close()
 
+
+def _build_train_log_dir(scene_name, grad_mode_info, time_str, args, task):
+    if hasattr(task, "opt_omega_y") and task.opt_omega_y is not None:
+        omega_y = float(task.opt_omega_y.numpy()[0])
+        return f"runs/{scene_name}/omega_y_{omega_y:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
+    if hasattr(task, "opt_vz") and task.opt_vz is not None:
+        vz = float(task.opt_vz.numpy()[0])
+        return f"runs/{scene_name}/vz_{vz:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
+    if hasattr(task, "opt_rigid_v") and task.opt_rigid_v is not None:
+        opt_v = task.opt_rigid_v.numpy()[0]
+        return f"runs/{scene_name}/vx_{opt_v[0]:.3f}_vy_{opt_v[1]:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
+    if hasattr(task, "opt_v_fluid") and task.opt_v_fluid is not None:
+        opt_v = task.opt_v_fluid.numpy()[0]
+        return f"runs/{scene_name}/v_{opt_v[0]:.3f}_{opt_v[1]:.3f}_{opt_v[2]:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
+    return f"runs/{scene_name}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+
     return last_loss_scalar
 
 
@@ -510,16 +530,36 @@ if __name__ == "__main__":
                 sim.opt_var[0] = new_var
                 if hasattr(sim.task, 'opt_rigid_v'):
                     sim.task.opt_rigid_v = new_var
+                if hasattr(sim.task, 'opt_omega_y'):
+                    sim.task.opt_omega_y = new_var
             else:
                 sim.opt_var = new_var
+                if hasattr(sim.task, 'opt_vz'):
+                    sim.task.opt_vz = new_var
+                if hasattr(sim.task, 'opt_omega_y'):
+                    sim.task.opt_omega_y = new_var
                 if hasattr(sim.task, 'opt_v_fluid'):
                     sim.task.opt_v_fluid = new_var
-            print(f"Overridden initial opt_var to: {sim.task.opt_rigid_v.numpy()}")
+            if hasattr(sim.task, 'opt_rigid_v'):
+                print(f"Overridden initial opt_var to: {sim.task.opt_rigid_v.numpy()}")
+            elif hasattr(sim.task, 'opt_omega_y'):
+                print(f"Overridden initial opt_var to: {sim.task.opt_omega_y.numpy()}")
+            elif hasattr(sim.task, 'opt_vz'):
+                print(f"Overridden initial opt_var to: {sim.task.opt_vz.numpy()}")
+            else:
+                print("Overridden initial opt_var")
         if args.cartpole_env_opt:
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
             log_vx = sim.task.opt_rigid_v.numpy()[0][0] if hasattr(sim.task, 'opt_rigid_v') else None
             log_vy = sim.task.opt_rigid_v.numpy()[0][1] if hasattr(sim.task, 'opt_rigid_v') else None
-            log_dir = f"runs/{scene_name}/cartpole_env/vx_{log_vx:.3f}_vy_{log_vy:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+            if hasattr(sim.task, 'opt_omega_y') and sim.task.opt_omega_y is not None:
+                log_omega_y = float(sim.task.opt_omega_y.numpy()[0])
+                log_dir = f"runs/{scene_name}/cartpole_env/omega_y_{log_omega_y:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+            elif hasattr(sim.task, 'opt_vz') and sim.task.opt_vz is not None:
+                log_vz = float(sim.task.opt_vz.numpy()[0])
+                log_dir = f"runs/{scene_name}/cartpole_env/vz_{log_vz:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+            else:
+                log_dir = f"runs/{scene_name}/cartpole_env/vx_{log_vx:.3f}_vy_{log_vy:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
 
             last_loss = run_cartpole_trajectory_optimization(
                 sim,
@@ -677,9 +717,7 @@ if __name__ == "__main__":
         elif args.train:
 
             time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-            log_vx = sim.task.opt_rigid_v.numpy()[0][0] if hasattr(sim.task, 'opt_rigid_v') else None
-            log_vy = sim.task.opt_rigid_v.numpy()[0][1] if hasattr(sim.task, 'opt_rigid_v') else None
-            log_dir = f"runs/{scene_name}/vx_{log_vx:.3f}_vy_{log_vy:.3f}/{grad_mode_info}/{time_str}_lr_{args.lr}"
+            log_dir = _build_train_log_dir(scene_name, grad_mode_info, time_str, args, sim.task)
 
             sim.reset()  # Ensure we start from the initial state before training
             last_loss = run_training(sim, args, log_dir=log_dir, enable_writer=True)

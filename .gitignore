@@ -239,3 +239,5 @@ grid_search_results/
 *_ref/
 checkpoints/
 requirements_old.txt
+datasets/
+models/
