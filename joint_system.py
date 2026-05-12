@@ -12,6 +12,9 @@ class ArticulatedJoints:
 	parent_local: wp.array(dtype=wp.vec3)
 	child_local: wp.array(dtype=wp.vec3)
 	inv_stiffness: wp.array(dtype=wp.float32)
+	# hinge axis in world coordinates for joints that allow rotation only around this axis.
+	# If zero vector, joint is fully constrained (no special hinge behavior).
+	hinge_axis: wp.array(dtype=wp.vec3)
 
 
 @wp.func
@@ -132,6 +135,17 @@ def solve_articulated_joints_impulse_inplace(
 	delta_v_child = impulse * rigid_inv_mass[child]
 	delta_omega_parent = rigid_inv_inertia[parent] @ wp.cross(RL1, -impulse)
 	delta_omega_child = rigid_inv_inertia[child] @ wp.cross(RL2, impulse)
+
+	# If hinge axis provided (non-zero), project angular corrections onto that axis
+	axis = joints.hinge_axis[tid]
+	axis_len2 = wp.dot(axis, axis)
+	if axis_len2 > 1e-12:
+		axis_n = axis * (1.0 / wp.sqrt(axis_len2))
+		# retain only component along axis
+		dp = wp.dot(delta_omega_parent, axis_n)
+		delta_omega_parent = axis_n * dp
+		dc = wp.dot(delta_omega_child, axis_n)
+		delta_omega_child = axis_n * dc
 
 	wp.atomic_add(rigid_delta_v_out, parent, delta_v_parent)
 	wp.atomic_add(rigid_delta_v_out, child, delta_v_child)

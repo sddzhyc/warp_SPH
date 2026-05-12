@@ -14,6 +14,7 @@ import os
 from tasks.ball_demo_task import BallDemoTask
 from tasks.skip_stone_task import SkipStoneTask
 from tasks.carpole_on_water_task import CarPoleOnWaterTask
+from tasks.fish_task import FishTask
 from tasks.water_rafting_task import WaterRaftingTask
 
 @wp.kernel
@@ -156,6 +157,9 @@ class SimSPH_diff(SimSPH):
         elif scene_lower and ("carpole_on_water" in scene_lower or "cartpole_on_water" in scene_lower):
             print("Initializing CarPoleOnWaterTask based on scene_file.")
             self.task = CarPoleOnWaterTask(self)
+        elif scene_lower and ("fish_on_water" in scene_lower or "fish" in scene_lower):
+            print("Initializing FishTask based on scene_file.")
+            self.task = FishTask(self)
         elif scene_lower and ("water-rafting" in scene_lower or "high-diving" in scene_lower):
             print("Initializing WaterRaftingTask based on scene_file.")
             self.task = WaterRaftingTask(self)

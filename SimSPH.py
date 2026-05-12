@@ -304,6 +304,7 @@ class SimSPH:
         child_ids = []
         parent_locals = []
         child_locals = []
+        hinge_axes = []
         inv_stiffness_list = []
 
         for system in art_systems:
@@ -365,6 +366,13 @@ class SimSPH:
                 parent_locals.append(joint_world - rigid_rest_cm_np[obj_id1])
                 child_locals.append(joint_world - rigid_rest_cm_np[obj_id2])
                 inv_stiffness_list.append(inv_stiffness)
+                # optional hinge axis (world-space). If provided, joint will allow
+                # rotation only about this axis. If omitted, use zero vector (no hinge behavior).
+                hinge = joint_cfg.get("hingeAxis", None)
+                if hinge is not None:
+                    hinge_axes.append(np.array(hinge, dtype=np.float32))
+                else:
+                    hinge_axes.append(np.array([0.0, 0.0, 0.0], dtype=np.float32))
 
         self.num_articulated_joints = len(parent_ids)
         if self.num_articulated_joints == 0:
@@ -376,6 +384,7 @@ class SimSPH:
         self.articulated_joints.parent_local = wp.array(np.array(parent_locals, dtype=np.float32), dtype=wp.vec3)
         self.articulated_joints.child_local = wp.array(np.array(child_locals, dtype=np.float32), dtype=wp.vec3)
         self.articulated_joints.inv_stiffness = wp.array(np.array(inv_stiffness_list, dtype=np.float32), dtype=wp.float32)
+        self.articulated_joints.hinge_axis = wp.array(np.array(hinge_axes, dtype=np.float32), dtype=wp.vec3)
 
         print(f"Initialized articulated joints: {self.num_articulated_joints}")
 
