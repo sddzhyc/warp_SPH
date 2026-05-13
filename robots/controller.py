@@ -3,7 +3,7 @@ from torch import nn
 
 
 class Controller(nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, action_min=None, action_max=None) -> None:
         super().__init__()
         self.dim = 3
         self.intput_dim = 27
@@ -19,8 +19,13 @@ class Controller(nn.Module):
             nn.Linear(32, self.output_dim),
         )
 
-        self.register_buffer("action_min", torch.tensor([-0.5, -0.5, -0.5], dtype=torch.float32))
-        self.register_buffer("action_max", torch.tensor([0.5, 0.0, 0.5], dtype=torch.float32))
+        if action_min is None:
+            action_min = [-0.5, -0.5, -0.5]
+        if action_max is None:
+            action_max = [0.5, 0.0, 0.5]
+
+        self.register_buffer("action_min", torch.tensor(action_min, dtype=torch.float32))
+        self.register_buffer("action_max", torch.tensor(action_max, dtype=torch.float32))
 
     def forward(self, x):
         x = torch.as_tensor(x, dtype=torch.float32, device=self.action_min.device)

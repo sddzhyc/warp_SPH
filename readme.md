@@ -27,6 +27,8 @@ python .\run_simulation.py --scene_file data\scenes\rigid-fluid-demo.json
 
 # python .\run_simulation.py --scene_file .\data\scenes\warp_SPH_test.json
 
+
+python ./train_cartpole_controller_diff.py  --scene_file ./data/scenes/carpole_on_water.json --lr 0.001 --method 1 --iters 100 --difffr --norm_grad --t 2 --test_only --control_interval 100 --bi 5 --model_path checkpoints/et1.0/difffr/g2/_normed/20260427-115330_lr_0.001/interval_5/no_t_max_loss_100/model_best_loss_1.420312e-04.pth --save_fluid_field
 ```
 ### differentable simulation test
 ```

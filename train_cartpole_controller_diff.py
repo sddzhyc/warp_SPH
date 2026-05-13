@@ -26,6 +26,7 @@ from utils import export_backward_data, build_export_settings, build_default_log
 GRID_SHAPE = (64, 32, 32)
 LOCAL_FLUID_GRID_CELL_SIZE = 0.03
 
+is_fish_task = False
 
 def _resolve_local_fluid_grid_shape(config, cell_size=None):
     if cell_size is None:
@@ -206,9 +207,32 @@ class FluidAEPolicyAdapter(torch.nn.Module):
         return self.base_controller(s, ae_feat)
 
 
+def _resolve_action_bounds(sim, action_dim=3):
+    global is_fish_task
+    if is_fish_task:
+        print("[task] Resolving action bounds for FishTask (z-axis angular velocity fixed to 0)")
+        action_min = [-1.0] * int(action_dim)
+        action_max = [1.0] * int(action_dim)
+        if int(action_dim) >= 3:
+            action_min[2] = 0.0
+            action_max[2] = 0.0
+    else:
+        if int(action_dim) == 2:
+            action_min = [-0.5, -0.5]
+            action_max = [0.5, 0.0]
+        else:
+            action_min = [-0.5] * int(action_dim)
+            action_max = [0.5] * int(action_dim)
+            if int(action_dim) >= 2:
+                action_max[1] = 0.0
+
+    return action_min, action_max
+
+
 def _build_policy_controller(sim, args):
     if not args.use_fluid:
-        return Controller()
+        action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
+        return Controller(action_min=action_min, action_max=action_max)
 
     if not args.time_in_state:
         raise ValueError("use_fluid requires --time_in_state so controller can map state time to local simulation step")
@@ -246,6 +270,8 @@ def _build_policy_controller(sim, args):
         state_dim=state_dim,
         ae_feat_dim=int(sample_feat.numel()),
         action_dim=action_dim,
+        action_min=_resolve_action_bounds(sim, action_dim=action_dim)[0],
+        action_max=_resolve_action_bounds(sim, action_dim=action_dim)[1],
     ).to(device)
     wrapped = FluidAEPolicyAdapter(
         sim=sim,
@@ -261,14 +287,15 @@ def _build_policy_controller(sim, args):
 def _make_env_for_sim(sim, args, sim_steps):
     """Return appropriate Differentiable env for the given simulator task."""
     # choose FishEnv when task is FishTask
+    global is_fish_task
+    is_fish_task = False
     task = getattr(sim, "task", None)
-    use_fish = False
     if task is not None:
         name = task.__class__.__name__
         if name == "FishTask" or "fish" in name.lower():
-            use_fish = True
-
-    EnvCls = DifferentiableFishEnv if use_fish else DifferentiableCartPoleEnv
+            is_fish_task = True
+            print(f"[task] Detected task '{name}', using DifferentiableFishEnv with angular velocity control and symmetric action bounds.")
+    EnvCls = DifferentiableFishEnv if is_fish_task else DifferentiableCartPoleEnv
     env = EnvCls(
         sim=sim,
         control_interval=args.control_interval,
@@ -279,9 +306,6 @@ def _make_env_for_sim(sim, args, sim_steps):
         total_sim_steps=sim_steps,
     )
     return env
-
-
-
 
 
 def _log_first_segment_step_grads(writer, sim, env):
@@ -416,6 +440,23 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             torch.save(controller.state_dict(), best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
 
+    if export_settings is not None and output_ply and series_prefix:
+        export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
+        seg_dir = os.path.dirname(series_prefix)
+        if seg_dir:
+            os.makedirs(seg_dir, exist_ok=True)
+        print(
+            f"[rollout] export final diff_segment: steps={export_steps}, "
+            f"output_interval={int(output_interval)}, prefix={series_prefix}"
+        )
+        export_backward_data(
+            sim,
+            export_steps,
+            output_interval,
+            series_prefix,
+            include_last_step=True,
+        )
+
     last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
     last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
     torch.save(controller.state_dict(), last_ckpt_path)
@@ -513,6 +554,23 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
             torch.save(controller.state_dict(), best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
 
+    if export_settings is not None and output_ply and series_prefix:
+        export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
+        seg_dir = os.path.dirname(series_prefix)
+        if seg_dir:
+            os.makedirs(seg_dir, exist_ok=True)
+        print(
+            f"[rollout] export final diff_segment: steps={export_steps}, "
+            f"output_interval={int(output_interval)}, prefix={series_prefix}"
+        )
+        export_backward_data(
+            sim,
+            export_steps,
+            output_interval,
+            series_prefix,
+            include_last_step=True,
+        )
+
     last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
     last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
     torch.save(controller.state_dict(), last_ckpt_path)
@@ -588,7 +646,8 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     if args.use_fluid:
         raise ValueError("use_fluid is not supported in sim_backward_controller mode. Use --train_ar instead.")
 
-    controller = Controller()
+    action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
+    controller = Controller(action_min=action_min, action_max=action_max)
     load_controller_checkpoint(controller, args.model_path)
     optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
     scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
@@ -680,8 +739,20 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
         output_ply, _, output_interval, series_prefix, _, _ = export_settings
         if output_ply:
             export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
-            print(f"exporting simulation data in backward to: {series_prefix}")
-            export_backward_data(sim, export_steps, output_interval, series_prefix)
+            seg_dir = os.path.dirname(series_prefix)
+            if seg_dir:
+                os.makedirs(seg_dir, exist_ok=True)
+            print(
+                f"[rollout] export final diff_segment: steps={export_steps}, "
+                f"output_interval={int(output_interval)}, prefix={series_prefix}"
+            )
+            export_backward_data(
+                sim,
+                export_steps,
+                output_interval,
+                series_prefix,
+                include_last_step=True,
+            )
 
     last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
     last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
@@ -708,7 +779,8 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
     if args.use_fluid:
         raise ValueError("use_fluid is not supported in replay_mode. Use --train_ar instead.")
 
-    controller = Controller()
+    action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
+    controller = Controller(action_min=action_min, action_max=action_max)
     load_controller_checkpoint(controller, args.model_path)
     optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
     scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
@@ -790,6 +862,23 @@ def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckp
             best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
             torch.save(controller.state_dict(), best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
+
+    if export_settings is not None and output_ply and series_prefix:
+        export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
+        seg_dir = os.path.dirname(series_prefix)
+        if seg_dir:
+            os.makedirs(seg_dir, exist_ok=True)
+        print(
+            f"[rollout] export final diff_segment: steps={export_steps}, "
+            f"output_interval={int(output_interval)}, prefix={series_prefix}"
+        )
+        export_backward_data(
+            sim,
+            export_steps,
+            output_interval,
+            series_prefix,
+            include_last_step=True,
+        )
 
     last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
     last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
@@ -933,13 +1022,13 @@ def get_parser():
     parser.add_argument("--save_fluid_field", action="store_true", help="Save local fluid velocity fields during forward-only rollout.")
     parser.add_argument("--fluid_field_out_dir", type=str, default="datasets/fluid_grid_dataset", help="Output directory for saved fluid fields.")
     
-    parser.add_argument("--disable_ply_export", action="store_true", help="Disable PLY export for test_only or collection runs.")
+    parser.add_argument("--disable_ply_export", action="store_true", help="Disable PLY export for test or collection runs.")
     parser.add_argument("--train_ar", action="store_true", help="Train controller with fluid AE features (AR mode).")
     parser.add_argument("--test_ar", action="store_true", help="Test controller with fluid AE features (AR mode).")
 
     parser.add_argument("--log_dir", type=str, default=None, help="TensorBoard log directory.")
     parser.add_argument("--model_path", type=str, default=None, help="Model path used to initialize controller or run test.")
-    parser.add_argument("--test_only", action="store_true", help="Run non-differentiable controller test only.")
+    parser.add_argument("--test", action="store_true", help="Run non-differentiable controller test only.")
     parser.add_argument("--loss_threshold", type=float, default=100, help="Max loss threshold; training stops early if exceeded.")
     parser.add_argument("--stage_path", type=str, default="example_sph.usd", help="USD stage output path.")
     parser.add_argument("--ply_path", type=str, default=None, help="Optional PLY initialization path.")
@@ -960,7 +1049,7 @@ def main():
         args.use_fluid = True
     if args.test_ar:
         args.use_fluid = True
-        args.test_only = True
+        args.test = True
     if args.use_fluid:
         args.time_in_state = True
 
@@ -994,7 +1083,7 @@ def main():
     print(f"Checkpoint directory: {ckpt_dir}")
     print(f"Using backwardInterval (signal spans): {args.backward_interval}")
 
-    if args.test_only:
+    if args.test:
         test_controller(sim, args, sim_steps, export_settings=export_settings)
     elif args.use_sim_backward:
         train_controller_with_sim_backward(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)

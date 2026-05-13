@@ -20,8 +20,10 @@ def assign_fish_init_y_angular_velocity_kernel(
 @wp.kernel
 def compute_fish_upright_loss_kernel(
     rigid_q: wp.array(dtype=wp.quat),
+    rigid_x: wp.array(dtype=wp.vec3),
     body_rigid_id: int,
     up_vec: wp.vec3,
+    target_pos: wp.vec3,
     loss: wp.array(dtype=float),
 ):
     tid = wp.tid()
@@ -32,7 +34,9 @@ def compute_fish_upright_loss_kernel(
         local_x = wp.vec3(1.0, 0.0, 0.0)
         world_dir = R @ local_x
         d = world_dir - up_vec
-        l = 0.5 * wp.dot(d, d)
+        x = rigid_x[body_rigid_id]
+        dp = x - target_pos
+        l = 0.5 * wp.dot(d, d) + 0.5 * wp.dot(dp, dp)
         wp.atomic_add(loss, 0, l)
 
 
@@ -43,7 +47,7 @@ class FishTask(Task):
         self.tail_rigid_id = None
 
         self.target_up = None
-        self.target_x = None
+        self.target_pos = None
 
         self.opt_omega = None
         self.optimizer = None
@@ -79,7 +83,9 @@ class FishTask(Task):
 
     def init_targets(self):
         self.target_up = wp.vec3(0.0, 1.0, 0.0)
+        self.target_pos = None
         up_np = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        target_pos_np = None
         # read from config if provided in rigid body cfg
         rigid_bodies = self.sim.cfg.get_rigid_bodies() if hasattr(self.sim, "cfg") and self.sim.cfg is not None else []
         for i, rb in enumerate(rigid_bodies):
@@ -88,7 +94,21 @@ class FishTask(Task):
                 if "targetUp" in rb:
                     up_np = np.array(rb.get("targetUp"), dtype=np.float32)
                     self.target_up = wp.vec3(float(up_np[0]), float(up_np[1]), float(up_np[2]))
+                if "targetPosition" in rb:
+                    target_pos_np = np.array(rb.get("targetPosition"), dtype=np.float32)
+                elif "targetPos" in rb:
+                    target_pos_np = np.array(rb.get("targetPos"), dtype=np.float32)
+                elif "targetX" in rb:
+                    target_pos_np = np.array(rb.get("targetX"), dtype=np.float32)
                 break
+
+        if target_pos_np is None:
+            if self.sim.num_objects > 0 and self.body_rigid_id is not None:
+                target_pos_np = self.sim.rigid_x_arrays[0].numpy()[self.body_rigid_id].astype(np.float32)
+            else:
+                target_pos_np = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+        self.target_pos = wp.vec3(float(target_pos_np[0]), float(target_pos_np[1]), float(target_pos_np[2]))
 
     def init_optimizer(self):
         # initialize a full vec3 angular velocity optimization variable
@@ -115,8 +135,10 @@ class FishTask(Task):
             dim=1,
             inputs=[
                 self.sim.rigid_quaternion_arrays[end_step],
+                self.sim.rigid_x_arrays[end_step],
                 self.body_rigid_id,
                 self.target_up,
+                self.target_pos,
             ],
             outputs=[self.sim.loss],
         )

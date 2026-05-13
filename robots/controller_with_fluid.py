@@ -8,7 +8,7 @@ class ControllerWithFluid(nn.Module):
 
     Usage: provide `state_dim` and `ae_feat_dim` (flattened AE encoding size).
     """
-    def __init__(self, state_dim:int, ae_feat_dim:int, action_dim:int, hidden=200, has_continuous_action_space=True, action_std_init=0.1):
+    def __init__(self, state_dim:int, ae_feat_dim:int, action_dim:int, hidden=200, has_continuous_action_space=True, action_std_init=0.1, action_min=None, action_max=None):
         super().__init__()
         self.state_dim = state_dim
         self.ae_feat_dim = ae_feat_dim
@@ -33,15 +33,16 @@ class ControllerWithFluid(nn.Module):
         )
 
         # action bounds (default for cartpole-on-water: vx, vy, vz)
-        if action_dim == 2:
-            action_min = [-0.5, -0.5]
-            action_max = [0.5, 0.0]
-        elif action_dim == 3:
-            action_min = [-0.5, -0.5, -0.5]
-            action_max = [0.5, 0.0, 0.5]
-        else:
-            action_min = [-0.5] * action_dim
-            action_max = [0.5] * action_dim
+        if action_min is None or action_max is None:
+            if action_dim == 2:
+                action_min = [-0.5, -0.5]
+                action_max = [0.5, 0.0]
+            elif action_dim == 3:
+                action_min = [-0.5, -0.5, -0.5]
+                action_max = [0.5, 0.0, 0.5]
+            else:
+                action_min = [-0.5] * action_dim
+                action_max = [0.5] * action_dim
         self.register_buffer('action_min', torch.tensor(action_min, dtype=torch.float32))
         self.register_buffer('action_max', torch.tensor(action_max, dtype=torch.float32))
 

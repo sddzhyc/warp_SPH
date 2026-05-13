@@ -7,12 +7,20 @@ from SimSPH import HASH_GRID_SIZE_SCALE
 from kernel_func import custom_grad_scale, custom_h_scale, use_const_2order_grad
 
 
-def export_backward_data(sim, sim_steps, output_interval, series_prefix, start_cnt=0):
+def export_backward_data(sim, sim_steps, output_interval, series_prefix, start_cnt=0, include_last_step=False):
     cnt_ply = int(start_cnt)
+    output_interval = max(1, int(output_interval))
     for time_step in range(sim_steps):
         if time_step % output_interval == 0:
             sim.export_ply_from_diff(f"{series_prefix}", time_step, cnt_ply)
             cnt_ply += 1
+
+    if include_last_step and sim_steps > 0:
+        last_step = int(sim_steps) - 1
+        if last_step % output_interval != 0:
+            sim.export_ply_from_diff(f"{series_prefix}", last_step, cnt_ply)
+            cnt_ply += 1
+
     return cnt_ply
 
 

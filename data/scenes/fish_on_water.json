@@ -48,6 +48,7 @@
 			"geometryFile": "./data/models/UnitBox.obj",
 			"density": 1000.0,
 			"translation": [0.0, 1.32, 0.0],
+			"targetPosition": [1.0, 1.32, 0.0],
 			"rotationAxis": [0, 0, 1],
 			"rotationAngle": 0,
 			"scale": [0.80, 0.32, 0.1],
