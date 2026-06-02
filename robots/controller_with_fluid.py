@@ -46,7 +46,7 @@ class ControllerWithFluid(nn.Module):
         self.register_buffer('action_min', torch.tensor(action_min, dtype=torch.float32))
         self.register_buffer('action_max', torch.tensor(action_max, dtype=torch.float32))
 
-    def forward(self, state, ae_feat):
+    def forward(self, state, ae_feat, step=None):
         # state: tensor or numpy array of shape (state_dim,)
         # ae_feat: tensor of shape (ae_feat_dim,) or feature map which will be flattened
         target_device = self.action_min.device

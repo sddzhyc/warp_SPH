@@ -19,13 +19,17 @@ def add_control_delta_v_kernel(
         # rigid_v[rigid_id] = rigid_v[rigid_id] + delta_v[0] TODO: 临时直接设置速度增量，后续改为叠加
 
 class DifferentiableCartPoleEnv:
-    def __init__(self, sim, control_interval, backward_interval, control_start_step=2, include_time=True, norm_grad=False, total_sim_steps=None):
+    def __init__(self, sim, control_interval, backward_interval, control_start_step=2, include_time=True, norm_grad=False, total_sim_steps=None, random_start=False, use_relative_state=False):
         self.sim = sim
         self.control_interval = int(control_interval)
         self.backward_interval = int(backward_interval)
         self.control_start_step = int(control_start_step)
         self.include_time = bool(include_time)
         self.norm_grad = bool(norm_grad)
+        self.random_start = bool(random_start)
+        self.use_relative_state = bool(use_relative_state)
+        # phase offset within a control interval for the first control application
+        self.control_phase_offset = 0
 
         if self.control_interval <= 0:
             raise ValueError("control_interval must be > 0")
@@ -57,8 +61,18 @@ class DifferentiableCartPoleEnv:
         self.sim.reset()
 
         self.action_records = []
-        self.export_ply_counter = 0
+        # Do NOT reset export_ply_counter here to avoid overwriting previously exported
+        # PLY files across episodes/segments. The counter is initialized in the ctor
+        # and may be explicitly set by caller when a fresh test run is desired.
         self.export_fluid_field_counter = 0
+        # choose random phase offset for first control application within one control interval
+        if self.random_start and self.control_interval > 0:
+            try:
+                self.control_phase_offset = int(np.random.randint(0, self.control_interval))
+            except Exception:
+                self.control_phase_offset = 0
+        else:
+            self.control_phase_offset = 0
 
     def set_total_sim_steps(self, total_sim_steps):
         total_sim_steps = int(total_sim_steps)
@@ -67,11 +81,16 @@ class DifferentiableCartPoleEnv:
         self.total_sim_steps = total_sim_steps
 
     def should_control(self, step):
-        if step < self.control_start_step:
+        # First control step is control_start_step + control_phase_offset, then every control_interval
+        first_step = int(self.control_start_step) + int(self.control_phase_offset)
+        if step < first_step:
             return False
-        return (step - self.control_start_step) % self.control_interval == 0
+        return (step - first_step) % self.control_interval == 0
 
     def get_state(self, step):
+        if self.use_relative_state:
+            return self.get_state_relative(step)
+
         rigid_x = self.sim.rigid_x_arrays[step].numpy()
         rigid_q = self.sim.rigid_quaternion_arrays[step].numpy()
         rigid_v = self.sim.rigid_v_arrays[step].numpy()
@@ -99,6 +118,59 @@ class DifferentiableCartPoleEnv:
         else:
             t = 0.0
         state_parts.append(t)
+
+        return np.asarray(state_parts, dtype=np.float32)
+
+    def get_state_relative(self, step):
+        rigid_x = self.sim.rigid_x_arrays[step].numpy()
+        rigid_q = self.sim.rigid_quaternion_arrays[step].numpy()
+        rigid_v = self.sim.rigid_v_arrays[step].numpy()
+        rigid_omega = self.sim.rigid_omega_arrays[step].numpy()
+
+        if step > 0:
+            rigid_x_prev = self.sim.rigid_x_arrays[step - 1].numpy()
+        else:
+            rigid_x_prev = rigid_x
+
+        body_ids = [self.car_rigid_id, self.rod_rigid_id]
+        state_parts = []
+
+        car_q = rigid_q[self.car_rigid_id]
+
+        def quat_mult(q1, q2):
+            w1, x1, y1, z1 = q1
+            w2, x2, y2, z2 = q2
+            return np.array([
+                w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            ], dtype=np.float32)
+
+        def rotate_to_local_frame(v, q):
+            q_conj = np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float32)
+            v_quat = np.array([0.0, v[0], v[1], v[2]], dtype=np.float32)
+            temp = quat_mult(q_conj, v_quat)
+            res = quat_mult(temp, q)
+            return res[1:4]
+
+        for rid in body_ids:
+            x = rigid_x[rid]
+            x_prev = rigid_x_prev[rid]
+            displacement = x - x_prev
+
+            q = rigid_q[rid]
+            v = rigid_v[rid]
+            omega = rigid_omega[rid]
+
+            v_local = rotate_to_local_frame(v, car_q)
+
+            state_parts.extend([
+                float(displacement[0]), float(displacement[1]), float(displacement[2]),
+                float(q[0]), float(q[1]), float(q[2]), float(q[3]),
+                float(v_local[0]), float(v_local[1]), float(v_local[2]),
+                float(omega[0]), float(omega[1]), float(omega[2]),
+            ])
 
         return np.asarray(state_parts, dtype=np.float32)
 
@@ -216,6 +288,7 @@ class DifferentiableCartPoleEnv:
     ):
         step_tapes = []
         step_action_entries = {}
+        replay_transitions = [] if collect_replay else None
 
         for local_t in range(backward_steps):
             current_tape = wp.Tape()
@@ -228,7 +301,7 @@ class DifferentiableCartPoleEnv:
             global_t = global_step_offset + local_t
             if self.should_control(global_t):
                 state_np = self.get_state(local_t)
-                action_torch = controller(state_np).reshape(-1)
+                action_torch = controller(state_np, local_t).reshape(-1)
                 action_wp = self._action_to_wp_vec3(action_torch)
 
                 rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
@@ -300,14 +373,16 @@ class DifferentiableCartPoleEnv:
                 if collect_replay:
                     if replay_buffer is None:
                         raise ValueError("replay_buffer must be provided when collect_replay is True")
-                    replay_buffer.add(
-                        state=state_np,
-                        action_grad=grad_vec,
-                        action=record["action"],
-                        step=record["step"],
-                        time=record["time"],
-                        loss=None,
-                    )
+                    transition = {
+                        "state": np.asarray(state_np, dtype=np.float32).copy(),
+                        "action_grad": np.asarray(grad_vec, dtype=np.float32).copy(),
+                        "action": np.asarray(record["action"], dtype=np.float32).copy(),
+                        "step": int(record["step"]),
+                        "time": float(record["time"]),
+                        "loss": None,
+                    }
+                    # buffer transitions locally and only flush after loss is computed
+                    replay_transitions.append(transition)
                     continue
 
                 if grad_callback is not None:
@@ -317,6 +392,14 @@ class DifferentiableCartPoleEnv:
                 batched_grad_tensors.append(grad_tensor)
 
         loss_val = float(np.asarray(self.sim.loss.numpy()).reshape(-1)[0])
+        # If we collected replay transitions, fill their loss and append to replay_buffer
+        if collect_replay and replay_transitions:
+            for transition in replay_transitions:
+                transition["loss"] = np.asarray(loss_val, dtype=np.float32).copy()
+                if hasattr(replay_buffer, "append"):
+                    replay_buffer.append(transition)
+                else:
+                    replay_buffer.add(**transition)
         avg_action_grad_norm = float(np.mean(np.asarray(action_grad_norms, dtype=np.float32))) if action_grad_norms else 0.0
         controls = int(len(step_action_entries))
 
@@ -331,7 +414,7 @@ class DifferentiableCartPoleEnv:
             "action_grad_tensors": batched_grad_tensors,
         }
 
-    def backward_with_controller(
+    def forward_backward_with_controller(
         self,
         controller,
         optimizer,
@@ -340,9 +423,14 @@ class DifferentiableCartPoleEnv:
         loss_threshold=None,
         grad_clip_norm=None,
         grad_callback=None,
+        batch_buffer=None,
+        collect_batch=False,
     ):
-        if optimizer is None:
-            raise ValueError("optimizer must be provided for backward_with_controller")
+        # If collect_batch is True, optimizer may be None and parameter
+        # gradients will be collected into `batch_buffer` instead of
+        # applying an immediate optimizer.step().
+        if not collect_batch and optimizer is None:
+            raise ValueError("optimizer must be provided for backward_with_controller when not collecting batch grads")
 
         step_tapes = []
         step_action_entries = {}
@@ -358,7 +446,7 @@ class DifferentiableCartPoleEnv:
             global_t = global_step_offset + local_t
             if self.should_control(global_t):
                 state_np = self.get_state(local_t)
-                action_torch = controller(state_np).reshape(-1)
+                action_torch = controller(state_np, local_t).reshape(-1)
                 action_wp = self._action_to_wp_vec3(action_torch)
 
                 rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
@@ -389,7 +477,8 @@ class DifferentiableCartPoleEnv:
 
         self._compute_loss_with_optional_end_step(loss_tape, backward_steps)
 
-        optimizer.zero_grad()
+        if optimizer is not None:
+            optimizer.zero_grad()
 
         with wp.ScopedTimer("Backward Propagation"):
             loss_tape.backward(self.sim.loss)
@@ -425,6 +514,7 @@ class DifferentiableCartPoleEnv:
                 if grad_callback is not None:
                     grad_callback(action_torch, grad_tensor, record)
 
+                # Backpropagate into controller parameters for this action
                 torch.autograd.backward([action_torch], grad_tensors=[grad_tensor])
 
             for i in reversed(records):
@@ -444,7 +534,8 @@ class DifferentiableCartPoleEnv:
                 f"[segment] skip optimizer step: loss {loss_val:.6e} exceeds threshold "
                 f"{loss_threshold:.2e}."
             )
-            optimizer.zero_grad()
+            if optimizer is not None:
+                optimizer.zero_grad()
             return {
                 "loss": loss_val,
                 "action_grad_norm": avg_action_grad_norm,
@@ -452,6 +543,40 @@ class DifferentiableCartPoleEnv:
                 "early_terminated": True,
             }
 
+        # If collecting batch gradients, capture per-parameter gradients into batch_buffer
+        if collect_batch and batch_buffer is not None:
+            # Flatten parameter gradients into a single 1D numpy array
+            grad_list = []
+            for p in controller.parameters():
+                if p.grad is not None:
+                    g = p.grad.detach().cpu().reshape(-1).numpy().astype(np.float32)
+                else:
+                    g = np.zeros(int(p.numel()), dtype=np.float32)
+                grad_list.append(g)
+            flat_grad = np.concatenate(grad_list, axis=0) if grad_list else np.array([], dtype=np.float32)
+
+            # Store minimal batch element: param gradients + loss + controls info
+            batch_item = {
+                "param_grad": flat_grad,
+                "loss": np.asarray(loss_val, dtype=np.float32).copy(),
+                "controls": controls,
+            }
+            batch_buffer.append(batch_item)
+
+            # Clear gradients on controller to avoid accumulation across segments
+            for p in controller.parameters():
+                if p.grad is not None:
+                    p.grad.detach_()
+                    p.grad.zero_()
+
+            return {
+                "loss": loss_val,
+                "action_grad_norm": avg_action_grad_norm,
+                "controls": controls,
+                "early_terminated": False,
+            }
+
+        # Otherwise perform immediate optimizer step
         if grad_clip_norm is not None and grad_clip_norm > 0:
             params = [param for group in optimizer.param_groups for param in group["params"]]
             torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
@@ -551,7 +676,7 @@ class DifferentiableCartPoleEnv:
                     grad_callback=grad_callback,
                 )
             else:
-                seg_stats = self.backward_with_controller(
+                seg_stats = self.forward_backward_with_controller(
                     controller=controller,
                     optimizer=optimizer,
                     backward_steps=backward_steps,
@@ -648,7 +773,7 @@ class DifferentiableCartPoleEnv:
                     global_t = global_step + local_t
                     if self.should_control(global_t):
                         state_np = self.get_state(local_t)
-                        action_torch = controller(state_np).reshape(-1)
+                        action_torch = controller(state_np, local_t).reshape(-1)
                         action_wp = self._action_to_wp_vec3(action_torch)
 
                         if self.export_fluid_field:

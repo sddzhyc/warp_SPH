@@ -103,6 +103,8 @@ def build_export_settings(args, config, end_time=None):
 
 def build_default_log_dir(args, end_time=None):
     scene_name = build_scene_name_with_grad_mode(args, end_time=end_time)
+    if getattr(args, "batch", None) is not None:
+        scene_name = f"{scene_name.rstrip('/')}/batch_{int(args.batch)}/"
     time_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"runs/{scene_name}/{time_str}_lr_{args.lr}"
 

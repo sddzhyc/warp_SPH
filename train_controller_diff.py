@@ -16,7 +16,6 @@ from SimSPH_diff import SimSPH_diff
 from SimDFSPH_diff import SimDFSPH_diff
 from SimDFSPH_diff_no_fluid_tape import SimDFSPH_diff as SimDFSPH_diff_no_fluid_tape
 from rigid_fluid_coupling import MaterialType
-from robots.grad_replay_buffer import GradReplayBuffer
 from robots.controller import Controller
 from robots.controller_with_fluid import ControllerWithFluid
 from fluid_encoder.ae_CNN_3d_pytorch import AutoEncoder3D
@@ -69,6 +68,7 @@ def _resolve_rigid_log_targets(sim):
 def _get_sim_state(sim, step, include_time):
     rod_rigid_id = int(getattr(sim.task, "rod_rigid_id", 1))
     car_rigid_id = int(getattr(sim.task, "car_rigid_id", 2))
+    state_rigid_ids = list(getattr(sim.task, "state_rigid_ids", [])) if getattr(sim, "task", None) is not None else []
 
     rigid_x = sim.rigid_x_arrays[step].numpy()
     rigid_q = sim.rigid_quaternion_arrays[step].numpy()
@@ -76,7 +76,8 @@ def _get_sim_state(sim, step, include_time):
     rigid_omega = sim.rigid_omega_arrays[step].numpy()
 
     state_parts = []
-    for rid in [car_rigid_id, rod_rigid_id]:
+    body_ids = state_rigid_ids if state_rigid_ids else [car_rigid_id, rod_rigid_id]
+    for rid in body_ids:
         x = rigid_x[rid]
         q = rigid_q[rid]
         v = rigid_v[rid]
@@ -112,34 +113,21 @@ def _get_fluid_particles_from_step(sim, step):
 
 
 def _save_particles_ply(file_path, positions, velocities):
-    """Save particle positions and velocities as an ASCII PLY point cloud.
-
-    Houdini can import PLY point clouds. We write x,y,z and vx,vy,vz per vertex.
-    """
-    positions = np.asarray(positions, dtype=np.float32)
-    velocities = np.asarray(velocities, dtype=np.float32)
-    assert positions.shape[0] == velocities.shape[0]
-    n = positions.shape[0]
-    with open(file_path, "w") as f:
-        f.write("ply\n")
-        f.write("format ascii 1.0\n")
-        f.write(f"element vertex {n}\n")
-        f.write("property float x\n")
-        f.write("property float y\n")
-        f.write("property float z\n")
-        f.write("property float vx\n")
-        f.write("property float vy\n")
-        f.write("property float vz\n")
-        f.write("end_header\n")
-        for i in range(n):
-            x, y, z = positions[i]
-            vx, vy, vz = velocities[i]
-            f.write(f"{x} {y} {z} {vx} {vy} {vz}\n")
+    # utility removed: no-op placeholder to preserve API compatibility
+    return
 
 
 def _build_local_fluid_grid(sim, step, grid_shape, grid_spacing, influence_radius):
-    car_rigid_id = int(getattr(sim.task, "car_rigid_id", 2))
-    rigid_center = sim.rigid_x_arrays[step].numpy()[car_rigid_id]
+    task = getattr(sim, "task", None)
+    state_rigid_ids = list(getattr(task, "state_rigid_ids", [])) if task is not None else []
+    if state_rigid_ids:
+        car_rigid_id = int(state_rigid_ids[0])
+    else:
+        car_rigid_id = int(getattr(task, "car_rigid_id", 1))
+
+    rigid_pos = sim.rigid_x_arrays[step].numpy()
+    car_rigid_id = max(0, min(car_rigid_id, rigid_pos.shape[0] - 1))
+    rigid_center = rigid_pos[car_rigid_id]
     particle_pos, particle_vel = _get_fluid_particles_from_step(sim, step)
     vel_grid, _ = get_local_fluid_grid_around_rigid(
         particle_pos=particle_pos,
@@ -180,22 +168,14 @@ class FluidAEPolicyAdapter(torch.nn.Module):
         except StopIteration:
             return torch.device("cpu")
 
-    def _infer_step_from_state(self, state_1d):
-        # We require time feature in state to align local step index per rollout segment.
-        t = float(state_1d[-1].detach().cpu().item())
-        dt = float(self.sim.frame_dt)
-        if dt <= 0:
-            return 0
-        step = int(np.round(t / dt))
-        step = max(0, min(step, len(self.sim.x_arrays) - 1))
-        return step
-
-    def forward(self, state):
+    def forward(self, state, step=None):
         s = torch.as_tensor(state, dtype=torch.float32, device=self._controller_device())
         if s.dim() != 1:
             raise ValueError("FluidAEPolicyAdapter.forward expects a 1D state vector")
 
-        step = self._infer_step_from_state(s)
+        if step is None:
+            step = 0
+        step = int(max(0, min(int(step), len(self.sim.x_arrays) - 1)))
         vel_grid = _build_local_fluid_grid(
             sim=self.sim,
             step=step,
@@ -204,7 +184,7 @@ class FluidAEPolicyAdapter(torch.nn.Module):
             influence_radius=self.influence_radius,
         )
         ae_feat = _encode_local_fluid_grid(self.ae_model, vel_grid, self._controller_device())
-        return self.base_controller(s, ae_feat)
+        return self.base_controller(s, ae_feat, step=step)
 
 
 def _resolve_action_bounds(sim, action_dim=3):
@@ -234,8 +214,6 @@ def _build_policy_controller(sim, args):
         action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
         return Controller(action_min=action_min, action_max=action_max)
 
-    if not args.time_in_state:
-        raise ValueError("use_fluid requires --time_in_state so controller can map state time to local simulation step")
     if not args.encoder_path:
         raise ValueError("use_fluid requires --encoder_path")
 
@@ -263,7 +241,11 @@ def _build_policy_controller(sim, args):
         influence_radius=args.fluid_influence_radius,
     )
     sample_feat = _encode_local_fluid_grid(ae_model, sample_grid, device)
-    state_dim = int(_get_sim_state(sim, step=0, include_time=True).shape[0])
+    # _get_sim_state always appends a trailing time slot; relative state does not include it.
+    include_time_for_state = bool(args.time_in_state and not getattr(args, "use_relative_state", False))
+    state_dim = int(_get_sim_state(sim, step=0, include_time=include_time_for_state).shape[0])
+    if getattr(args, "use_relative_state", False):
+        state_dim -= 1
     action_dim = 3
 
     base_controller = ControllerWithFluid(
@@ -304,6 +286,8 @@ def _make_env_for_sim(sim, args, sim_steps):
         include_time=args.time_in_state,
         norm_grad=args.norm_grad,
         total_sim_steps=sim_steps,
+        random_start=getattr(args, "random_start", False),
+        use_relative_state=getattr(args, "use_relative_state", False),
     )
     return env
 
@@ -388,7 +372,18 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
 
     best_loss = float("inf")
     best_ckpt_path = None
-    last_loss_val = None
+
+    batch_size = 1 if args.batch is None else int(args.batch)
+    if batch_size <= 0:
+        raise ValueError("batch must be > 0")
+    batch_buffer = []
+
+    total_sim_steps = int(env.total_sim_steps)
+    if total_sim_steps <= 0:
+        raise ValueError("total_sim_steps must be set on env before training")
+    diff_horizon = int(env.backward_interval) * int(env.control_interval)
+    if diff_horizon <= 0:
+        raise ValueError("backward_interval and control_interval must produce diff_horizon > 0")
 
     for epoch in range(args.iters):
         controller.train()
@@ -398,38 +393,119 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             and series_prefix
             and (epoch == args.iters - 1)
         )
-        rollout_stats = env.rollout(
+        env.reset_episode()
+
+        global_step = 0
+        processed_steps = 0
+        segment_count = 0
+        control_count = 0
+        segment_losses = []
+        segment_action_grad_norms = []
+        early_terminated = False
+        batch_update_losses = []
+        batch_sample_losses = []
+        batch_updates = 0
+
+        # Continue collecting segments until we have at least `batch_size` samples.
+        # If we reach the end of the episode (global_step >= total_sim_steps), reset
+        # the environment and continue collecting across episodes.
+        while len(batch_buffer) < batch_size:
+            if global_step >= total_sim_steps:
+                env.reset_episode()
+                global_step = 0
+
+            backward_steps = min(diff_horizon, total_sim_steps - global_step)
+            sim.sim_steps = backward_steps
+
+            # Run differentiable segment and collect per-segment parameter gradients
+            seg_stats = env.forward_backward_with_controller(
+                controller=controller,
+                optimizer=None,
+                global_step_offset=global_step,
+                backward_steps=backward_steps,
+                loss_threshold=args.loss_threshold,
+                collect_batch=True,
+                batch_buffer=batch_buffer,
+            )
+
+            segment_count += 1
+            control_count += int(seg_stats["controls"])
+            segment_losses.append(float(seg_stats["loss"]))
+            segment_action_grad_norms.append(float(seg_stats["action_grad_norm"]))
+            processed_steps += backward_steps
+
+            if seg_stats["early_terminated"]:
+                early_terminated = True
+                print(
+                    f"[train_controller] segment {segment_count} early stop: loss {seg_stats['loss']:.6e} exceeds "
+                    f"threshold {args.loss_threshold:.2e}."
+                )
+                # end current episode early and start next one
+                env.reset_episode()
+                global_step = 0
+                continue
+
+            # Export segment if requested
+            if env.export_before_diff_reset and env.export_series_prefix:
+                seg_output_interval = max(1, int(env.export_output_interval))
+                seg_series_prefix = env.export_series_prefix
+                seg_dir = os.path.dirname(seg_series_prefix)
+                if seg_dir:
+                    os.makedirs(seg_dir, exist_ok=True)
+                print(
+                    f"[rollout] export diff_segment {segment_count}: steps={backward_steps}, "
+                    f"output_interval={seg_output_interval}, prefix={seg_series_prefix}"
+                )
+                env.export_ply_counter = export_backward_data(
+                    sim,
+                    backward_steps,
+                    seg_output_interval,
+                    seg_series_prefix,
+                    start_cnt=env.export_ply_counter,
+                )
+
+            sim.diff_reset(backward_steps)
+            global_step += backward_steps
+
+        update_loss, batch_sample_loss, updates_done = buffer_update_controller(
             controller=controller,
             optimizer=optimizer,
+            batch_buffer=batch_buffer,
+            updates_per_iter=1,
             grad_clip_norm=args.grad_clip_norm,
-            loss_threshold=args.loss_threshold,
+            scheduler=scheduler,
         )
+        if updates_done > 0:
+            batch_update_losses.append(float(update_loss))
+            batch_sample_losses.append(float(batch_sample_loss))
+            batch_updates += int(updates_done)
+            # batch updated for this epoch
 
-        # step scheduler once per epoch (env.rollout handles internal optimizer steps)
-        if scheduler is not None:
-            scheduler.step()
-            current_lr = scheduler.get_last_lr()[0]
-            print(f"[LR] Current LR: {current_lr:.6e}")
+        loss_val = float(segment_losses[-1]) if segment_losses else 0.0
+        action_grad_norm = float(np.mean(np.asarray(segment_action_grad_norms, dtype=np.float32))) if segment_action_grad_norms else 0.0
+        batch_loss_val = float(np.mean(np.asarray(batch_update_losses, dtype=np.float32))) if batch_update_losses else float("nan")
+        batch_sample_loss_val = float(np.mean(np.asarray(batch_sample_losses, dtype=np.float32))) if batch_sample_losses else float("nan")
 
-        loss_val = rollout_stats["loss"]
-        last_loss_val = loss_val
-        action_grad_norm = rollout_stats["action_grad_norm"]
-        control_count = rollout_stats["controls"]
-        segment_count = rollout_stats["segments"]
-        early_terminated = bool(rollout_stats.get("early_terminated", False))
+        current_lr = _get_current_lr(optimizer)
+        print(f"[LR] Current LR: {current_lr:.6e}")
 
 
         print(
             f"Epoch {epoch:04d} | avg_loss={loss_val:.6e} | controls={control_count} | "
-            f"segments={segment_count} | avg_action_grad_norm={action_grad_norm:.6e}"
+            f"segments={segment_count} | avg_action_grad_norm={action_grad_norm:.6e} | "
+            f"batch_updates={batch_updates} | batch_loss={batch_loss_val:.6e} | "
+            f"batch_sample_loss={batch_sample_loss_val:.6e}"
         )
 
         if writer is not None:
             writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("Loss/batch", batch_loss_val, epoch)
+            writer.add_scalar("Loss/batch_samples", batch_sample_loss_val, epoch)
             writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Control/count", float(control_count), epoch)
             writer.add_scalar("Backward/segments", float(segment_count), epoch)
+            writer.add_scalar("Batch/updates", float(batch_updates), epoch)
             if args.iters == 1 and epoch == 0:
                 _log_first_segment_step_grads(writer, sim, env)
 
@@ -456,12 +532,6 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             series_prefix,
             include_last_step=True,
         )
-
-    last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
-    last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
-    torch.save(controller.state_dict(), last_ckpt_path)
-
-    print(f"Saved last model to: {last_ckpt_path}")
 
     if writer is not None:
         writer.close()
@@ -497,7 +567,6 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
     os.makedirs(ckpt_dir, exist_ok=True)
 
     best_loss = float("inf")
-    last_loss_val = None
 
     for epoch in range(args.iters):
         controller.train()
@@ -528,7 +597,6 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
         print(f"[LR] Current LR: {current_lr:.6e}")
 
         loss_val = rollout_stats["loss"]
-        last_loss_val = loss_val
         action_grad_norm = rollout_stats["action_grad_norm"]
         control_count = rollout_stats["controls"]
         segment_count = rollout_stats["segments"]
@@ -571,12 +639,6 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
             include_last_step=True,
         )
 
-    last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
-    last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
-    torch.save(controller.state_dict(), last_ckpt_path)
-
-    print(f"Saved last model to: {last_ckpt_path}")
-
     if writer is not None:
         writer.close()
 
@@ -592,6 +654,13 @@ def _get_current_lr(optimizer):
         return float("nan")
     return float(optimizer.param_groups[0].get("lr", float("nan")))
 
+
+def _batch_buffer_clear(batch_buffer):
+    if hasattr(batch_buffer, "clear"):
+        batch_buffer.clear()
+    else:
+        del batch_buffer[:]
+
 def build_lr_scheduler(optimizer, args):
     total_steps = max(1, int(args.iters) * 1)
     warmup_steps = int(0.05 * total_steps)
@@ -605,24 +674,47 @@ def build_lr_scheduler(optimizer, args):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
-def _replay_update_controller(controller, optimizer, replay_buffer, batch_size, updates_per_iter, grad_clip_norm, scheduler=None):
-    if len(replay_buffer) == 0:
-        return 0.0, 0
+def buffer_update_controller(controller, optimizer, batch_buffer, updates_per_iter, grad_clip_norm, scheduler=None):
+    if len(batch_buffer) == 0:
+        return 0.0, 0.0, 0
 
     device = _get_controller_device(controller)
     update_losses = []
+    batch_sample_losses = []
     updates_done = 0
 
-    for _ in range(int(updates_per_iter)):
-        batch = replay_buffer.sample(batch_size)
+    if hasattr(batch_buffer, "_storage"):
+        transitions = list(batch_buffer._storage)
+    else:
+        transitions = list(batch_buffer)
 
-        states = torch.as_tensor(batch["state"], dtype=torch.float32, device=device)
-        action_grads = torch.as_tensor(batch["action_grad"], dtype=torch.float32, device=device)
+    if len(transitions) == 0:
+        return 0.0, 0.0, 0
+
+    # Use only precomputed parameter gradients from batch items.
+    if "param_grad" not in transitions[0]:
+        raise ValueError("batch items must contain 'param_grad'; per_sample_losses path has been removed")
+
+    grads_np = np.stack([item["param_grad"] for item in transitions], axis=0)
+    losses_np = np.asarray([item.get("loss", 0.0) for item in transitions], dtype=np.float32)
+
+    for _ in range(int(updates_per_iter)):
+        avg_grad = np.mean(grads_np, axis=0)
+        avg_grad_t = torch.as_tensor(avg_grad, dtype=torch.float32, device=device)
 
         optimizer.zero_grad()
-        pred_actions = controller(states)
-        surrogate_loss = (pred_actions * action_grads).sum(dim=-1).mean()
-        surrogate_loss.backward()
+
+        # Scatter averaged flat gradient back into each parameter tensor.
+        offset = 0
+        for p in controller.parameters():
+            n = int(p.numel())
+            if n > 0:
+                g_slice = avg_grad_t[offset: offset + n].view_as(p).to(device)
+                if p.grad is None:
+                    p.grad = g_slice.clone()
+                else:
+                    p.grad.data.copy_(g_slice)
+                offset += n
 
         if grad_clip_norm is not None and grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(optimizer.param_groups[0]["params"], grad_clip_norm)
@@ -633,10 +725,18 @@ def _replay_update_controller(controller, optimizer, replay_buffer, batch_size, 
             except Exception:
                 pass
 
-        update_losses.append(float(surrogate_loss.detach().cpu().item()))
+        update_losses.append(float(np.mean(losses_np)))
+        batch_sample_losses.append(float(np.mean(losses_np)))
         updates_done += 1
 
-    return float(np.mean(np.asarray(update_losses, dtype=np.float32))), updates_done
+    # Keep buffer samples aligned with current controller parameters.
+    _batch_buffer_clear(batch_buffer)
+
+    return (
+        float(np.mean(np.asarray(update_losses, dtype=np.float32))),
+        float(np.mean(np.asarray(batch_sample_losses, dtype=np.float32))),
+        updates_done,
+    )
 
 
 def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
@@ -665,7 +765,6 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     os.makedirs(ckpt_dir, exist_ok=True)
 
     best_loss = float("inf")
-    last_loss_val = None
 
     for epoch in range(args.iters):
         controller.train()
@@ -685,7 +784,6 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
             sim.norm_final_grad()
 
         loss_val = float(np.asarray(sim.loss.numpy()).reshape(-1)[0])
-        last_loss_val = loss_val
 
         if sim.task.opt_rigid_v.grad is not None:
             grad_tensor = wp.to_torch(sim.task.opt_rigid_v.grad).reshape(-1).to(
@@ -754,141 +852,8 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
                 include_last_step=True,
             )
 
-    last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
-    last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
-    torch.save(controller.state_dict(), last_ckpt_path)
-    print(f"Saved last model to: {last_ckpt_path}")
-
     if writer is not None:
         writer.close()
-
-
-def train_controller_with_replay(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-
-    env = _make_env_for_sim(sim, args, sim_steps)
-    
-
-    if export_settings is not None:
-        output_ply, _, output_interval, series_prefix, _, _ = export_settings
-        env.export_before_diff_reset = False
-        env.export_output_interval = int(output_interval)
-        env.export_series_prefix = series_prefix
-
-    if args.use_fluid:
-        raise ValueError("use_fluid is not supported in replay_mode. Use --train_ar instead.")
-
-    action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
-    controller = Controller(action_min=action_min, action_max=action_max)
-    load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
-    scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
-
-    replay_buffer = GradReplayBuffer(args.replay_capacity)
-    state_dim = int(env.get_state(0).shape[0])
-    print(f"Replay mode enabled | state_dim={state_dim} | buffer_capacity={args.replay_capacity}")
-
-    writer = None
-    if args.log_dir:
-        os.makedirs(args.log_dir, exist_ok=True)
-        writer = tensorboardX.SummaryWriter(log_dir=args.log_dir)
-
-    if ckpt_dir is None:
-        ckpt_dir = os.path.join(build_checkpoint_dir(args), build_controller_run_tag(args))
-
-    os.makedirs(ckpt_dir, exist_ok=True)
-
-    best_loss = float("inf")
-    last_loss_val = None
-
-    for epoch in range(args.iters):
-        controller.train()
-        env.export_before_diff_reset = bool(
-            export_settings is not None
-            and output_ply
-            and series_prefix
-            and (epoch == args.iters - 1)
-        )
-        rollout_stats = env.rollout(
-            controller=controller,
-            grad_clip_norm=args.grad_clip_norm,
-            loss_threshold=args.loss_threshold,
-            collect_replay=True,
-            replay_buffer=replay_buffer,
-        )
-
-        rollout_loss = rollout_stats["loss"]
-        last_loss_val = rollout_loss
-        action_grad_norm = rollout_stats["action_grad_norm"]
-        control_count = rollout_stats["controls"]
-        buffer_size = len(replay_buffer)
-
-        replay_loss = float("nan")
-        replay_updates = 0
-        if buffer_size >= args.replay_warmup:
-            controller.train()
-            replay_loss, replay_updates = _replay_update_controller(
-                controller=controller,
-                optimizer=optimizer,
-                replay_buffer=replay_buffer,
-                batch_size=args.replay_batch_size,
-                updates_per_iter=args.replay_updates_per_iter,
-                grad_clip_norm=args.grad_clip_norm,
-                scheduler=scheduler,
-            )
-
-        print(
-            f"Epoch {epoch:04d} | rollout_loss={rollout_loss:.6e} | replay_loss={replay_loss:.6e} | "
-            f"controls={control_count} | buffer={buffer_size} | replay_updates={replay_updates} | "
-            f"avg_action_grad_norm={action_grad_norm:.6e}"
-        )
-
-        if writer is not None:
-            writer.add_scalar("Loss/rollout", rollout_loss, epoch)
-            if replay_updates > 0:
-                writer.add_scalar("Loss/replay", replay_loss, epoch)
-            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
-            writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
-            writer.add_scalar("Control/count", float(control_count), epoch)
-            writer.add_scalar("Replay/buffer_size", float(buffer_size), epoch)
-            writer.add_scalar("Replay/updates", float(replay_updates), epoch)
-            if args.iters == 1 and epoch == 0:
-                _log_first_segment_step_grads(writer, sim, env)
-
-        if rollout_loss < best_loss:
-            best_loss = rollout_loss
-            loss_tag = "loss_unknown" if rollout_loss is None or not np.isfinite(rollout_loss) else f"loss_{rollout_loss:.6e}"
-            best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
-            torch.save(controller.state_dict(), best_ckpt_path)
-            print(f"Saved best model to: {best_ckpt_path}")
-
-    if export_settings is not None and output_ply and series_prefix:
-        export_steps = min(int(sim.sim_steps), len(sim.x_arrays))
-        seg_dir = os.path.dirname(series_prefix)
-        if seg_dir:
-            os.makedirs(seg_dir, exist_ok=True)
-        print(
-            f"[rollout] export final diff_segment: steps={export_steps}, "
-            f"output_interval={int(output_interval)}, prefix={series_prefix}"
-        )
-        export_backward_data(
-            sim,
-            export_steps,
-            output_interval,
-            series_prefix,
-            include_last_step=True,
-        )
-
-    last_loss_tag = "loss_unknown" if last_loss_val is None or not np.isfinite(last_loss_val) else f"loss_{last_loss_val:.6e}"
-    last_ckpt_path = os.path.join(ckpt_dir, f"model_last_{last_loss_tag}.pth")
-    torch.save(controller.state_dict(), last_ckpt_path)
-
-    print(f"Saved last model to: {last_ckpt_path}")
-
-    if writer is not None:
-        writer.close()
-
 
 def load_controller_checkpoint(controller, ckpt_path):
     if not ckpt_path:
@@ -1008,6 +973,8 @@ def get_parser():
     parser.add_argument("--control_interval", type=int, default=1260, help="Control interval in simulation steps.")
     parser.add_argument("--control_start_step", type=int, default=0, help="First step where control is applied.")
     parser.add_argument("--time_in_state", action="store_true", help="Include time feature in state.")
+    parser.add_argument("--random_start", action="store_true", help="Randomize first control time within one control interval on episode reset.")
+    parser.add_argument("--use_relative_state", action="store_true", help="Use relative state representation for robot envs.")
     parser.add_argument("--scheduler_steps_per_epoch", type=int, default=1, help="Estimated optimizer steps per epoch used by the LR scheduler.")
     parser.add_argument("--lr_scheduler", action="store_true", help="Enable learning-rate scheduler (off by default).")
 
@@ -1050,8 +1017,6 @@ def main():
     if args.test_ar:
         args.use_fluid = True
         args.test = True
-    if args.use_fluid:
-        args.time_in_state = True
 
     sim_time = args.t
     sim, config, sim_steps = build_simulator(args)
@@ -1075,9 +1040,12 @@ def main():
 
     ckpt_dir = os.path.join(build_checkpoint_dir(args, end_time=sim_time), backward_interval_tag, run_tag)
 
+    batch_tag = None if args.batch is None else f"batch_{int(args.batch)}"
     if args.log_dir is None:
         args.log_dir = os.path.join(build_default_log_dir(args, end_time=sim_time), backward_interval_tag, run_tag)
     else:
+        if batch_tag is not None:
+            args.log_dir = os.path.join(args.log_dir, batch_tag)
         args.log_dir = os.path.join(args.log_dir, backward_interval_tag, run_tag)
     print(f"TensorBoard logging to {args.log_dir}")
     print(f"Checkpoint directory: {ckpt_dir}")
@@ -1087,8 +1055,8 @@ def main():
         test_controller(sim, args, sim_steps, export_settings=export_settings)
     elif args.use_sim_backward:
         train_controller_with_sim_backward(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
-    elif args.replay_mode:
-        train_controller_with_replay(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
+    elif args.batch is not None:
+        train_controller(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
     else:
         train_controller_online(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
 

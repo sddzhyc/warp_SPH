@@ -27,7 +27,7 @@ class Controller(nn.Module):
         self.register_buffer("action_min", torch.tensor(action_min, dtype=torch.float32))
         self.register_buffer("action_max", torch.tensor(action_max, dtype=torch.float32))
 
-    def forward(self, x):
+    def forward(self, x, step=None):
         x = torch.as_tensor(x, dtype=torch.float32, device=self.action_min.device)
         control_signal = self.linear_relu_stack(x)
         control_signal = torch.clamp(control_signal, min=self.action_min, max=self.action_max)

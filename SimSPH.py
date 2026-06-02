@@ -307,6 +307,30 @@ class SimSPH:
         hinge_axes = []
         inv_stiffness_list = []
 
+        def _cfg_rel_to_world(rb_cfg, rel):
+            scale = np.array(rb_cfg.get("scale", [1.0, 1.0, 1.0]), dtype=np.float32)
+            rel_scaled = rel * (scale * 0.5)
+
+            rot_axis = rb_cfg.get("rotationAxis", [0.0, 0.0, 1.0])
+            rot_angle = rb_cfg.get("rotationAngle", 0.0)
+            axis = np.array(rot_axis, dtype=np.float32)
+            axis_norm = np.linalg.norm(axis)
+            if axis_norm < 1.0e-8:
+                rot = np.eye(3, dtype=np.float32)
+            else:
+                axis = axis / axis_norm
+                angle = float(rot_angle) / 180.0 * np.pi
+                quat = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
+                rot_m = wp.quat_to_matrix(quat)
+                rot = np.array([
+                    [float(rot_m[0, 0]), float(rot_m[0, 1]), float(rot_m[0, 2])],
+                    [float(rot_m[1, 0]), float(rot_m[1, 1]), float(rot_m[1, 2])],
+                    [float(rot_m[2, 0]), float(rot_m[2, 1]), float(rot_m[2, 2])],
+                ], dtype=np.float32)
+            rel_rot = rot @ rel_scaled
+            translation = np.array(rb_cfg.get("translation", [0.0, 0.0, 0.0]), dtype=np.float32)
+            return rel_rot + translation
+
         for system in art_systems:
             rigid_indices = system.get("rigidIndices", [])
             joints_cfg = system.get("joints", [])
@@ -329,32 +353,20 @@ class SimSPH:
 
                 if "jointPoint" in joint_cfg:
                     joint_world = np.array(joint_cfg["jointPoint"], dtype=np.float32)
+                elif "jointRelativePosition1" in joint_cfg and "jointRelativePosition2" in joint_cfg:
+                    rel1 = np.array(joint_cfg["jointRelativePosition1"], dtype=np.float32)
+                    rel2 = np.array(joint_cfg["jointRelativePosition2"], dtype=np.float32)
+                    parent_cfg = rigid_bodies_cfg[scene_i1]
+                    child_cfg = rigid_bodies_cfg[scene_i2]
+                    joint_world_1 = _cfg_rel_to_world(parent_cfg, rel1)
+                    joint_world_2 = _cfg_rel_to_world(child_cfg, rel2)
+                    # Average two anchors to reduce mismatch if config has tiny inconsistencies.
+                    joint_world = 0.5 * (joint_world_1 + joint_world_2)
                 elif "jointRelativePosition" in joint_cfg:
                     rel = np.array(joint_cfg["jointRelativePosition"], dtype=np.float32)
                     child_cfg = rigid_bodies_cfg[scene_i2]
-                    scale = np.array(child_cfg.get("scale", [1.0, 1.0, 1.0]), dtype=np.float32)
-                    rel_scaled = rel * (scale * 0.5)
-
-                    rot_axis = child_cfg.get("rotationAxis", [0.0, 0.0, 1.0])
-                    rot_angle = child_cfg.get("rotationAngle", 0.0)
-                    axis = np.array(rot_axis, dtype=np.float32)
-                    axis_norm = np.linalg.norm(axis)
-                    if axis_norm < 1.0e-8:
-                        rot = np.eye(3, dtype=np.float32)
-                    else:
-                        axis = axis / axis_norm
-                        angle = float(rot_angle) / 180.0 * np.pi
-                        quat = wp.quat_from_axis_angle(wp.vec3(float(axis[0]), float(axis[1]), float(axis[2])), angle)
-                        rot_m = wp.quat_to_matrix(quat)
-                        rot = np.array([
-                            [float(rot_m[0, 0]), float(rot_m[0, 1]), float(rot_m[0, 2])],
-                            [float(rot_m[1, 0]), float(rot_m[1, 1]), float(rot_m[1, 2])],
-                            [float(rot_m[2, 0]), float(rot_m[2, 1]), float(rot_m[2, 2])],
-                        ], dtype=np.float32)
-                    rel_rot = rot @ rel_scaled
-
-                    translation = np.array(child_cfg.get("translation", [0.0, 0.0, 0.0]), dtype=np.float32)
-                    joint_world = rel_rot + translation
+                    # Legacy single-side anchor: interpreted in child local space.
+                    joint_world = _cfg_rel_to_world(child_cfg, rel)
                 else:
                     continue
 

@@ -5,6 +5,20 @@ import warp as wp
 
 from .base_task import Task
 
+def _euler_xyz_deg_to_up_direction(euler_deg):
+    # Convert xyz Euler angles in degrees to "up" direction vector (local X-axis in world space).
+    ex, ey, ez = np.deg2rad(np.array(euler_deg, dtype=np.float32))
+    q_wp = wp.quat_rpy(float(ex), float(ey), float(ez))
+    # Construct rotation matrix: local X -> world direction
+    # For simplicity, assume local "up" direction is (1, 0, 0) in body frame transformed to world
+    # Using Warp's quat_rotate which requires proper device context; use numpy instead
+    # Quick approximation: Euler RPY -> rotation matrix
+    import scipy.spatial.transform as st
+    R = st.Rotation.from_euler('xyz', euler_deg, degrees=True).as_matrix()
+    local_x = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    world_dir = (R @ local_x).astype(np.float32)
+    return world_dir
+
 
 @wp.kernel
 def assign_fish_init_y_angular_velocity_kernel(
@@ -20,24 +34,17 @@ def assign_fish_init_y_angular_velocity_kernel(
 @wp.kernel
 def compute_fish_upright_loss_kernel(
     rigid_q: wp.array(dtype=wp.quat),
-    rigid_x: wp.array(dtype=wp.vec3),
+    target_rigid_q: wp.array(dtype=wp.quat),
     body_rigid_id: int,
-    up_vec: wp.vec3,
-    target_pos: wp.vec3,
     loss: wp.array(dtype=float),
 ):
     tid = wp.tid()
     if tid == 0:
         q = rigid_q[body_rigid_id]
-        R = wp.quat_to_matrix(q)
-        # local long axis (x axis) in world space
-        local_x = wp.vec3(1.0, 0.0, 0.0)
-        world_dir = R @ local_x
-        d = world_dir - up_vec
-        x = rigid_x[body_rigid_id]
-        dp = x - target_pos
-        l = 0.5 * wp.dot(d, d) + 0.5 * wp.dot(dp, dp)
-        wp.atomic_add(loss, 0, l)
+        tq = target_rigid_q[body_rigid_id]
+        dq = q - tq
+        l_rot = 0.5 * wp.dot(dq, dq)
+        wp.atomic_add(loss, 0, l_rot)
 
 
 class FishTask(Task):
@@ -45,6 +52,7 @@ class FishTask(Task):
         super().__init__(sim)
         self.body_rigid_id = None
         self.tail_rigid_id = None
+        self.state_rigid_ids = []
 
         self.target_up = None
         self.target_pos = None
@@ -80,35 +88,34 @@ class FishTask(Task):
 
         self.body_rigid_id = body_id
         self.tail_rigid_id = tail_id
+        self.state_rigid_ids = [self.body_rigid_id]
 
     def init_targets(self):
-        self.target_up = wp.vec3(0.0, 1.0, 0.0)
-        self.target_pos = None
-        up_np = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        target_pos_np = None
-        # read from config if provided in rigid body cfg
+        # Prepare target rigid quaternion array. Prefer direct quaternion from JSON.
+        self.target_rigid_q = wp.zeros_like(self.sim.rbs.rigid_quaternion)
+        target_q_np = self.sim.rbs.rigid_quaternion.numpy().copy()
+
         rigid_bodies = self.sim.cfg.get_rigid_bodies() if hasattr(self.sim, "cfg") and self.sim.cfg is not None else []
         for i, rb in enumerate(rigid_bodies):
             obj_id = int(rb.get("objectId", i + 1))
             if obj_id == self.body_rigid_id:
-                if "targetUp" in rb:
-                    up_np = np.array(rb.get("targetUp"), dtype=np.float32)
-                    self.target_up = wp.vec3(float(up_np[0]), float(up_np[1]), float(up_np[2]))
-                if "targetPosition" in rb:
-                    target_pos_np = np.array(rb.get("targetPosition"), dtype=np.float32)
-                elif "targetPos" in rb:
-                    target_pos_np = np.array(rb.get("targetPos"), dtype=np.float32)
-                elif "targetX" in rb:
-                    target_pos_np = np.array(rb.get("targetX"), dtype=np.float32)
+                # JSON may provide the full target quaternion directly (x,y,z,w)
+                if "targetQuaternion" in rb:
+                    q = np.array(rb.get("targetQuaternion"), dtype=np.float32)
+                    target_q_np[self.body_rigid_id] = q
+                elif "targetQ" in rb:
+                    q = np.array(rb.get("targetQ"), dtype=np.float32)
+                    target_q_np[self.body_rigid_id] = q
+                elif "targetAngleInDegree" in rb:
+                    # fallback: convert Euler angles to quaternion (x,y,z,w)
+                    import scipy.spatial.transform as st
+                    euler = rb.get("targetAngleInDegree")
+                    q = st.Rotation.from_euler('xyz', euler, degrees=True).as_quat().astype(np.float32)
+                    target_q_np[self.body_rigid_id] = q
                 break
 
-        if target_pos_np is None:
-            if self.sim.num_objects > 0 and self.body_rigid_id is not None:
-                target_pos_np = self.sim.rigid_x_arrays[0].numpy()[self.body_rigid_id].astype(np.float32)
-            else:
-                target_pos_np = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        wp.copy(self.target_rigid_q, wp.array(target_q_np, dtype=wp.quat))
 
-        self.target_pos = wp.vec3(float(target_pos_np[0]), float(target_pos_np[1]), float(target_pos_np[2]))
 
     def init_optimizer(self):
         # initialize a full vec3 angular velocity optimization variable
@@ -129,16 +136,13 @@ class FishTask(Task):
             return
         if end_step is None:
             end_step = self.sim.sim_steps
-
         wp.launch(
             kernel=compute_fish_upright_loss_kernel,
             dim=1,
             inputs=[
                 self.sim.rigid_quaternion_arrays[end_step],
-                self.sim.rigid_x_arrays[end_step],
+                self.target_rigid_q,
                 self.body_rigid_id,
-                self.target_up,
-                self.target_pos,
             ],
             outputs=[self.sim.loss],
         )

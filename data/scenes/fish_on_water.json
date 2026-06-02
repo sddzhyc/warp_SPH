@@ -20,7 +20,7 @@
 		"particleRadius": 0.026, 
 		"radius":  0.025,
 		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]], 
-		"waveBoundaryEnable": false,
+		"waveBoundaryEnable": true,
 		"waveBoundaryAmplitude": 0.20,
 		"waveBoundaryFrequency": 1.0,
 		"waveBoundaryPhase": 0.0,
@@ -44,14 +44,13 @@
 	}],
 	"RigidBodies": [
 		{
-			"comment": "fish_body",
-			"geometryFile": "./data/models/UnitBox.obj",
+			"comment": "koifish_whole",
+			"geometryFile": "./data/models/koifish.obj",
 			"density": 1000.0,
-			"translation": [0.0, 1.32, 0.0],
-			"targetPosition": [1.0, 1.32, 0.0],
+			"translation": [0.0, 1.4, 0.0],
 			"rotationAxis": [0, 0, 1],
 			"rotationAngle": 0,
-			"scale": [0.80, 0.32, 0.1],
+			"scale": [0.2, 0.2, 0.15],
 			"velocity": [0.0, 0.0, 0.0],
 			"angularVelocity": [0.0, 0.0, 0.0],
 			"color": [0.1, 0.4, 0.6, 1.0], 
@@ -59,38 +58,9 @@
 			"isWall": false,
 			"mapInvert": false, 
 			"mapThickness": 0.0,
-			"mapResolution": [30,30,20]
-		},
-		{
-			"comment": "fish_tail",
-			"geometryFile": "./data/models/UnitBox.obj",
-			"density": 1000.0,
-			"translation": [0.62, 1.32, 0.0],
-			"rotationAxis": [0, 0, 1],
-			"rotationAngle": 0,
-			"scale": [0.44, 0.24, 0.1],
-			"velocity": [0.0, 0.0, 0.0],
-			"angularVelocity": [0.0, 0.0, 0.0],
-			"color": [0.1, 0.4, 0.6, 1.0], 
-			"isDynamic": true,
-			"isWall": false,
-			"mapInvert": false, 
-			"mapThickness": 0.0,
-			"mapResolution": [30,30,20]
-		}
-	],
-	"ArticulatedSystems": [
-		{
-			"rigidIndices" : [0, 1],
-			"invStiffness" : 0.0,
-			"joints":[
-				{
-					"rigidIndex1" : 0,
-					"rigidIndex2" : 1,
-					"jointRelativePosition" : [-1.0, 0.0, 0.0],
-					"hingeAxis" : [0.0, 0.0, 1.0]
-				}
-			]
+			"mapResolution": [30,30,20],
+			"targetAngleInDegree": [0, 0, 0],
+			"targetPosition": [0.0, 1.4, 0.0]
 		}
 	]
 }
