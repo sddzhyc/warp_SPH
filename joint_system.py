@@ -11,10 +11,13 @@ class ArticulatedJoints:
 	child_index: wp.array(dtype=int)
 	parent_local: wp.array(dtype=wp.vec3)
 	child_local: wp.array(dtype=wp.vec3)
+	# Revolute Joint: hinge axes in parent/child local frames
+	# (zero vector = spherical joint only, no orientation constraint)
+	parent_axis_local: wp.array(dtype=wp.vec3)
+	child_axis_local: wp.array(dtype=wp.vec3)
+	# joint type: 0=spherical, 1=revolute (spherical + orientation)
+	joint_type: wp.array(dtype=wp.int32)
 	inv_stiffness: wp.array(dtype=wp.float32)
-	# hinge axis in world coordinates for joints that allow rotation only around this axis.
-	# If zero vector, joint is fully constrained (no special hinge behavior).
-	hinge_axis: wp.array(dtype=wp.vec3)
 
 
 @wp.func
@@ -90,6 +93,90 @@ def integrate_rigid_pose_inplace(
 	rigid_torque_out[tid] = wp.vec3(0.0, 0.0, 0.0)
 
 
+@wp.func
+def build_tangent_basis(n: wp.vec3):
+	"""给定单位向量 n，构造两个正交切向量 t1 ⟂ n, t2 ⟂ n（t1 ⟂ t2）
+	参考论文 4.3 节的 Orientation Joint 投影矩阵构造"""
+	# 选一个与 n 不共线的参考向量来叉积
+	if wp.abs(n[0]) < wp.float32(0.999):
+		ref = wp.vec3(1.0, 0.0, 0.0)
+	else:
+		ref = wp.vec3(0.0, 1.0, 0.0)
+	t1 = wp.normalize(wp.cross(ref, n))
+	t2 = wp.cross(n, t1)
+	return t1, t2
+
+
+@wp.func
+def solve_orientation_joint(
+	q_parent_rel: wp.quat,
+	q_child_rel: wp.quat,
+	invI_parent: wp.mat33,
+	invI_child: wp.mat33,
+	axis_parent_local: wp.vec3,
+	axis_child_local: wp.vec3,
+	dt: float,
+):
+	"""论文 4.3 节 Orientation Joint 求解器 (Revolute Joint 的角度约束部分)
+
+	约束: parent 和 child 的局部轴在旋转后应保持同向（世界空间重合）
+	仅允许绕 a1 的旋转，在 t1/t2 切空间方向施加约束
+
+	Returns:
+		(delta_omega_parent, delta_omega_child): 角速度修正量
+	"""
+	# 1. 计算世界坐标轴
+	a1 = wp.quat_to_matrix(q_parent_rel) @ axis_parent_local
+	a2 = wp.quat_to_matrix(q_child_rel) @ axis_child_local
+	a1 = wp.normalize(a1)
+	a2 = wp.normalize(a2)
+
+	# 2. 论文误差: d = a1 × a2
+	rot_error = wp.cross(a1, a2)
+
+	# 3. 构造 a1 的切空间基 (t1, t2 ⟂ a1)
+	t1, t2 = build_tangent_basis(a1)
+
+	# 4. 将误差投影到 2D 约束空间: rhs = P · rot_error / dt
+	#    P = [t1^T; t2^T] (2×3)，不显式构造矩阵，直接点积
+	rhs0 = wp.dot(rot_error, t1) / dt
+	rhs1 = wp.dot(rot_error, t2) / dt
+
+	# 5. L = invI_parent + invI_child (3×3)
+	L = invI_parent + invI_child
+
+	# 6. 投影后的 2×2 有效质量矩阵 M = P · L · P^T
+	m00 = wp.dot(t1, L @ t1)
+	m01 = wp.dot(t1, L @ t2)
+	m10 = m01
+	m11 = wp.dot(t2, L @ t2)
+
+	# 7. 求解 M · λ = rhs (2×2 矩阵求逆)
+	detM = m00 * m11 - m01 * m10
+	eps = wp.float32(1e-12)
+	# 用条件赋值避免 NaN（若奇异则返回零修正）
+	if wp.abs(detM) < eps:
+		z = wp.vec3(0.0, 0.0, 0.0)
+		return z, z
+
+	invM00 = m11 / detM
+	invM01 = -m01 / detM
+	invM10 = -m10 / detM
+	invM11 = m00 / detM
+
+	lambda0 = invM00 * rhs0 + invM01 * rhs1
+	lambda1 = invM10 * rhs0 + invM11 * rhs1
+
+	# 8. 恢复 3D 角冲量: l = P^T · λ = λ0·t1 + λ1·t2
+	ang_impulse = lambda0 * t1 + lambda1 * t2
+
+	# 9. 返回角速度修正
+	delta_parent = invI_parent @ ang_impulse
+	delta_child = -invI_child @ ang_impulse
+
+	return delta_parent, delta_child
+
+
 @wp.kernel
 def solve_articulated_joints_impulse_inplace(
 	rigid_x: wp.array(dtype=wp.vec3),
@@ -136,16 +223,21 @@ def solve_articulated_joints_impulse_inplace(
 	delta_omega_parent = rigid_inv_inertia[parent] @ wp.cross(RL1, -impulse)
 	delta_omega_child = rigid_inv_inertia[child] @ wp.cross(RL2, impulse)
 
-	# If hinge axis provided (non-zero), project angular corrections onto that axis
-	axis = joints.hinge_axis[tid]
-	axis_len2 = wp.dot(axis, axis)
-	if axis_len2 > 1e-12:
-		axis_n = axis * (1.0 / wp.sqrt(axis_len2))
-		# retain only component along axis
-		dp = wp.dot(delta_omega_parent, axis_n)
-		delta_omega_parent = axis_n * dp
-		dc = wp.dot(delta_omega_child, axis_n)
-		delta_omega_child = axis_n * dc
+	# --- Orientation Joint (Revolute) 角速度约束 ---
+	# joint_type == 1 (revolute): 在球关节基础上叠加 orientation joint
+	# 约束 parent 和 child 的局部轴保持同向，仅允许绕该轴的 1-DOF 旋转
+	if joints.joint_type[tid] == 1:
+		rot_domega_parent, rot_domega_child = solve_orientation_joint(
+			q_parent_rel,
+			q_child_rel,
+			rigid_inv_inertia[parent],
+			rigid_inv_inertia[child],
+			joints.parent_axis_local[tid],
+			joints.child_axis_local[tid],
+			dt,
+		)
+		delta_omega_parent = delta_omega_parent + rot_domega_parent
+		delta_omega_child = delta_omega_child + rot_domega_child
 
 	wp.atomic_add(rigid_delta_v_out, parent, delta_v_parent)
 	wp.atomic_add(rigid_delta_v_out, child, delta_v_child)

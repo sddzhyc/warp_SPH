@@ -39,7 +39,7 @@ def sum_grad_fluid(
 
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False):
+    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False, use_v_loss=False):
         super().__init__(config, container, 0, stage_path, ply_path, h_scale)
         self.ply_path = ply_path
         self.sim_steps = sim_steps
@@ -47,6 +47,7 @@ class SimSPH_diff(SimSPH):
         self.use_custom_grad = use_custom_grad
         self.use_norm_grad = use_norm_grad
         self.use_diffFR = use_diffFR
+        self.use_v_loss = use_v_loss
         self.init_diff_phys(self.sim_steps)
         self.init_diff_task() 
 
@@ -157,6 +158,10 @@ class SimSPH_diff(SimSPH):
         elif scene_lower and ("carpole_on_water" in scene_lower or "cartpole_on_water" in scene_lower):
             print("Initializing CarPoleOnWaterTask based on scene_file.")
             self.task = CarPoleOnWaterTask(self)
+        elif scene_lower and ("fish_on_water_new" in scene_lower):
+            print("Initializing FishTaskNew (body+tail joint fish) based on scene_file.")
+            from tasks.fish_task_new import FishTaskNew
+            self.task = FishTaskNew(self, use_v_loss=self.use_v_loss)
         elif scene_lower and ("fish_on_water" in scene_lower or "fish" in scene_lower):
             print("Initializing FishTask based on scene_file.")
             self.task = FishTask(self)

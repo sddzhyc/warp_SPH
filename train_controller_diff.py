@@ -2,6 +2,7 @@
 import argparse
 import datetime
 import os
+import time
 
 import numpy as np
 import torch
@@ -22,10 +23,159 @@ from fluid_encoder.ae_CNN_3d_pytorch import AutoEncoder3D
 from fluid_encoder.encoder_utils import get_local_fluid_grid_around_rigid, normalize_fluid_field
 from utils import export_backward_data, build_export_settings, build_default_log_dir, build_checkpoint_dir, build_controller_run_tag, save_fluid_velocity_field
 
+# import newton
+# import newton.examples
+HAS_NEWTON = True
+
 GRID_SHAPE = (64, 32, 32)
 LOCAL_FLUID_GRID_CELL_SIZE = 0.03
 
 is_fish_task = False
+
+# class ControllerTrainingViewer:
+#     """Interactive Newton GL viewer for controller training."""
+
+#     def __init__(self, viewer, args):
+#         self.viewer = viewer
+#         self.args = args
+#         self.enabled = self._is_interactive_viewer(args)
+#         self.should_stop = False
+#         self.sim_time = 0.0
+#         self.radii = None
+#         self.colors = None
+
+#     @staticmethod
+#     def _is_interactive_viewer(args):
+#         if not HAS_NEWTON:
+#             return False
+#         viewer_type = str(getattr(args, "viewer", "gl")).lower()
+#         if viewer_type != "gl":
+#             return False
+#         return not bool(getattr(args, "headless", False))
+
+#     def setup(self, sim):
+#         if not self.enabled:
+#             return
+
+#         newton_model = getattr(sim, "newton_model", None)
+#         if newton_model is None:
+#             self.enabled = False
+#             return
+
+#         spacing = float(getattr(sim, "particle_spacing", getattr(sim, "particle_radius", 0.026) * 2.0))
+#         self.viewer.set_model(newton_model)
+#         self.viewer.show_particles = False
+#         self.viewer.show_collision = False
+#         self.viewer.show_contacts = False
+#         self.viewer.show_visual = True
+
+#         if hasattr(self.viewer, "camera"):
+#             self.viewer.camera_control_enable = False
+#             self.viewer.camera.pos = wp.vec3(-0.50, -7.80, 3.00)
+#             self.viewer.camera.pitch = -15
+#             self.viewer.camera.yaw = 90
+#             self.viewer.camera.fov = 30
+
+#         state = sim.get_state() if hasattr(sim, 'get_state') else getattr(sim, 'state', None)
+#         if state is None:
+#             self.enabled = False
+#             return
+            
+#         n = int(newton_model.particle_count)
+#         self.radii = wp.full(n, 0.5 * spacing, dtype=wp.float32, device=newton_model.device)
+#         self.colors = self._build_particle_colors(state, n, newton_model.device)
+#         print("[viewer] Interactive GL viewer enabled.")
+
+#     def _build_particle_colors(self, state, particle_count, device):
+#         colors_np = np.tile(np.array([0.10, 0.40, 0.90], dtype=np.float32), (particle_count, 1))
+
+#         boundary_indices = getattr(state, "boundary_indices", None)
+#         if boundary_indices is not None and hasattr(boundary_indices, "numpy"):
+#             rigid_idx = boundary_indices.numpy().astype(np.int32)
+#             if rigid_idx.size > 0:
+#                 colors_np[rigid_idx] = np.array([0.95, 0.45, 0.20], dtype=np.float32)
+#                 return wp.array(colors_np, dtype=wp.vec3, device=device)
+
+#         object_id = getattr(state, "object_id", None)
+#         if object_id is not None and hasattr(object_id, "numpy"):
+#             obj_np = object_id.numpy().astype(np.int32)
+#             rigid_mask = obj_np > 0
+#             colors_np[rigid_mask] = np.array([0.95, 0.45, 0.20], dtype=np.float32)
+#             return wp.array(colors_np, dtype=wp.vec3, device=device)
+
+#         material_marks = getattr(state, "material_marks", None)
+#         if material_marks is not None:
+#             material = getattr(material_marks, "material", None)
+#             if material is not None and hasattr(material, "numpy"):
+#                 material_np = material.numpy().astype(np.int32)
+#                 rigid_mask = material_np == int(MaterialType.SOLID)
+#                 colors_np[rigid_mask] = np.array([0.95, 0.45, 0.20], dtype=np.float32)
+
+#         return wp.array(colors_np, dtype=wp.vec3, device=device)
+
+#     def reset_time(self):
+#         self.sim_time = 0.0
+
+#     def is_running(self):
+#         if not self.enabled:
+#             return True
+#         if hasattr(self.viewer, "is_running"):
+#             return bool(self.viewer.is_running())
+#         return True
+
+#     def wait_if_paused(self):
+#         if not self.enabled:
+#             return
+#         while bool(getattr(self.viewer, "_paused", False)):
+#             if not self.is_running():
+#                 self.should_stop = True
+#                 return
+#             self.render_frame(None)
+#             time.sleep(0.01)
+
+#     def render_frame(self, sim):
+#         if not self.enabled:
+#             return
+#         if sim is None:
+#             self.viewer.begin_frame(self.sim_time)
+#             self.viewer.end_frame()
+#             return
+
+#         state = sim.get_state() if hasattr(sim, 'get_state') else getattr(sim, 'state', None)
+#         if state is None:
+#             return
+            
+#         self.viewer.begin_frame(self.sim_time)
+#         if hasattr(state, "newton_state"):
+#             self.viewer.log_state(state.newton_state)
+#         self.viewer.log_points(
+#             "sphdiff_water",
+#             points=state.particle_q if hasattr(state, 'particle_q') else state.x,
+#             radii=self.radii,
+#             colors=self.colors,
+#             hidden=False,
+#         )
+#         self.viewer.end_frame()
+
+#     def on_sim_step(self, sim, frame_dt):
+#         if not self.enabled:
+#             return
+#         self.wait_if_paused()
+#         if self.should_stop or not self.is_running():
+#             self.should_stop = True
+#             return
+#         self.sim_time += float(frame_dt)
+#         self.render_frame(sim)
+
+
+def _safe_close_viewer(viewer):
+    if viewer is None or not hasattr(viewer, "close"):
+        return
+    try:
+        viewer.close()
+    except Exception as exc:
+        print(f"[viewer] close failed: {exc}")
+
 
 def _resolve_local_fluid_grid_shape(config, cell_size=None):
     if cell_size is None:
@@ -89,8 +239,17 @@ def _get_sim_state(sim, step, include_time):
             omega[0], omega[1], omega[2],
         ])
 
-    t = float(step) * float(sim.frame_dt) if include_time else 0.0
-    state_parts.append(t)
+    if include_time:
+        t = float(step) * float(sim.frame_dt)
+        # Use sin/cos encoding for time synchronized with wave boundary frequency
+        # waveBoundaryFrequency = 1.0 Hz -> period = 1.0 second
+        omega = 2.0 * np.pi / 1.0  # Period = 1.0s (matches wave boundary frequency)
+        state_parts.append(float(np.sin(omega * t)))
+        state_parts.append(float(np.cos(omega * t)))
+    else:
+        state_parts.append(0.0)
+        state_parts.append(0.0)
+    
     return np.asarray(state_parts, dtype=np.float32)
 
 
@@ -111,10 +270,6 @@ def _get_fluid_particles_from_step(sim, step):
 
     return pos_all, vel_all
 
-
-def _save_particles_ply(file_path, positions, velocities):
-    # utility removed: no-op placeholder to preserve API compatibility
-    return
 
 
 def _build_local_fluid_grid(sim, step, grid_shape, grid_spacing, influence_radius):
@@ -187,31 +342,22 @@ class FluidAEPolicyAdapter(torch.nn.Module):
         return self.base_controller(s, ae_feat, step=step)
 
 
-def _resolve_action_bounds(sim, action_dim=3):
+def _resolve_action_bounds(sim, action_dim=1):
     global is_fish_task
     if is_fish_task:
-        print("[task] Resolving action bounds for FishTask (z-axis angular velocity fixed to 0)")
+        print("[task] Resolving action bounds for FishTask (only Y-axis angular velocity)")
         action_min = [-1.0] * int(action_dim)
         action_max = [1.0] * int(action_dim)
-        if int(action_dim) >= 3:
-            action_min[2] = 0.0
-            action_max[2] = 0.0
     else:
-        if int(action_dim) == 2:
-            action_min = [-0.5, -0.5]
-            action_max = [0.5, 0.0]
-        else:
-            action_min = [-0.5] * int(action_dim)
-            action_max = [0.5] * int(action_dim)
-            if int(action_dim) >= 2:
-                action_max[1] = 0.0
+        action_min = [-0.5] * int(action_dim)
+        action_max = [0.5] * int(action_dim)
 
     return action_min, action_max
 
 
 def _build_policy_controller(sim, args):
     if not args.use_fluid:
-        action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
+        action_min, action_max = _resolve_action_bounds(sim, action_dim=1)
         return Controller(action_min=action_min, action_max=action_max)
 
     if not args.encoder_path:
@@ -245,8 +391,8 @@ def _build_policy_controller(sim, args):
     include_time_for_state = bool(args.time_in_state and not getattr(args, "use_relative_state", False))
     state_dim = int(_get_sim_state(sim, step=0, include_time=include_time_for_state).shape[0])
     if getattr(args, "use_relative_state", False):
-        state_dim -= 1
-    action_dim = 3
+        state_dim -= 2
+    action_dim = 1
 
     base_controller = ControllerWithFluid(
         state_dim=state_dim,
@@ -274,7 +420,7 @@ def _make_env_for_sim(sim, args, sim_steps):
     task = getattr(sim, "task", None)
     if task is not None:
         name = task.__class__.__name__
-        if name == "FishTask" or "fish" in name.lower():
+        if name in ("FishTask", "FishTaskNew") or "fish" in name.lower():
             is_fish_task = True
             print(f"[task] Detected task '{name}', using DifferentiableFishEnv with angular velocity control and symmetric action bounds.")
     EnvCls = DifferentiableFishEnv if is_fish_task else DifferentiableCartPoleEnv
@@ -331,14 +477,16 @@ def _log_first_segment_step_grads(writer, sim, env):
                 if len(grad_val) == 4:
                     writer.add_scalar(f"{tag_prefix}/w", float(grad_val[3]), time_step)
 
+    # action gradient 维度自适应: CartPole=3 (force xyz), Fish=1 (angular velocity y)
+    _action_grad_labels = {0: "x", 1: "y", 2: "z", 3: "w"}
     for idx, record in enumerate(getattr(env, "action_records", [])):
         grad_vec = record.get("grad", None)
         if grad_vec is None:
             continue
         step = int(record.get("step", idx))
-        writer.add_scalar("Action_Step_Grad/x", float(grad_vec[0]), step)
-        writer.add_scalar("Action_Step_Grad/y", float(grad_vec[1]), step)
-        writer.add_scalar("Action_Step_Grad/z", float(grad_vec[2]), step)
+        for dim in range(len(grad_vec)):
+            label = _action_grad_labels.get(dim, f"dim{dim}")
+            writer.add_scalar(f"Action_Step_Grad/{label}", float(grad_vec[dim]), step)
         writer.add_scalar("Action_Step_Grad/norm", float(np.linalg.norm(grad_vec)), step)
 
 
@@ -746,7 +894,7 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     if args.use_fluid:
         raise ValueError("use_fluid is not supported in sim_backward_controller mode. Use --train_ar instead.")
 
-    action_min, action_max = _resolve_action_bounds(sim, action_dim=3)
+    action_min, action_max = _resolve_action_bounds(sim, action_dim=1)
     controller = Controller(action_min=action_min, action_max=action_max)
     load_controller_checkpoint(controller, args.model_path)
     optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
@@ -923,6 +1071,7 @@ def build_simulator(args):
                 use_norm_grad=args.norm_grad,
                 use_diffFR=args.difffr,
                 verbose=args.verbose,
+                use_v_loss=args.use_v_loss,
             )
         else:
             sim = SimSPH_diff(
@@ -937,6 +1086,7 @@ def build_simulator(args):
                 use_norm_grad=args.norm_grad,
                 use_diffFR=args.difffr,
                 verbose=args.verbose,
+                use_v_loss=args.use_v_loss,
             )
 
     return sim, config, sim_steps
@@ -1004,6 +1154,11 @@ def get_parser():
     parser.add_argument("--norm_grad", action="store_true", help="Enable state-gradient normalization in simulator.")
     parser.add_argument("--difffr", action="store_true", help="Enable diffFR mode.")
     parser.add_argument("--verbose", action="store_true", help="Verbose simulator logs.")
+    parser.add_argument("--use_v_loss", action="store_true", help="Add fish body forward velocity loss term (FishTaskNew only).")
+
+    # Rendering options
+    parser.add_argument("--viewer", type=str, default="gl", choices=["gl", "none"], help="Viewer type for real-time rendering.")
+    parser.add_argument("--headless", action="store_true", help="Run in headless mode (no GUI).")
 
     return parser
 
@@ -1018,8 +1173,22 @@ def main():
         args.use_fluid = True
         args.test = True
 
+    # Initialize viewer if enabled
+    # viewer = None
+    # viewer_session = None
+    # if HAS_NEWTON and args.viewer == "gl" and not args.headless:
+    #     viewer, args = newton.examples.init(args)
+    #     viewer_session = ControllerTrainingViewer(viewer, args)
+    #     print("[viewer] Created Newton GL viewer")
+
     sim_time = args.t
     sim, config, sim_steps = build_simulator(args)
+    
+    # # Attach viewer session to sim if available
+    # if viewer_session is not None:
+    #     viewer_session.setup(sim)
+    #     sim.viewer_session = viewer_session
+
     if sim_time is None:
         sim_time = config.get_cfg("end_time")
 
@@ -1059,6 +1228,8 @@ def main():
         train_controller(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
     else:
         train_controller_online(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
+
+    # _safe_close_viewer(viewer)
 
     if export_settings is not None:
         output_ply, _, _, series_prefix, _, _ = export_settings

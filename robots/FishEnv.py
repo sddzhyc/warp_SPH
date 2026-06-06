@@ -12,13 +12,33 @@ from utils import export_backward_data, save_fluid_velocity_field
 
 @wp.kernel
 def add_control_delta_omega_kernel(
-    delta_omega: wp.array(dtype=wp.vec3),
+    delta_omega: wp.array(dtype=wp.float32),
     rigid_id: int,
     rigid_omega: wp.array(dtype=wp.vec3),
 ):
+    """单刚体模式：将 body 的角速度设为 (0, action, 0)"""
     tid = wp.tid()
     if tid == 0:
-        rigid_omega[rigid_id] = delta_omega[0]
+        rigid_omega[rigid_id] = wp.vec3(0.0, delta_omega[0], 0.0)
+
+
+@wp.kernel
+def add_joint_torque_omega_kernel(
+    action: wp.array(dtype=wp.float32),
+    body_id: int,
+    tail_id: int,
+    rigid_omega: wp.array(dtype=wp.vec3),
+):
+    """关节力矩模式：对 body 和 tail 施加大小相等、方向相反的 Y 轴角速度增量
+    模拟在 revolute 关节处施加的力矩：body 获得 +action，tail 获得 -action"""
+    tid = wp.tid()
+    if tid == 0:
+        delta = action[0]
+        # 在现有角速度上叠加（保留物理模拟的 omega）
+        ob = rigid_omega[body_id]
+        ot = rigid_omega[tail_id]
+        rigid_omega[body_id] = wp.vec3(ob[0], ob[1] + delta, ob[2])
+        rigid_omega[tail_id] = wp.vec3(ot[0], ot[1] - delta, ot[2])
 
 
 class DifferentiableFishEnv(DifferentiableCartPoleEnv):
@@ -87,9 +107,15 @@ class DifferentiableFishEnv(DifferentiableCartPoleEnv):
 
         if self.include_time:
             t = float(step) * float(self.sim.frame_dt)
+            # Use sin/cos encoding for time synchronized with wave boundary frequency
+            # waveBoundaryFrequency = 1.0 Hz -> period = 1.0 second
+            omega = 2.0 * np.pi / 1.0  # Period = 1.0s (matches wave boundary frequency)
+            state_parts.append(float(np.sin(omega * t)))
+            state_parts.append(float(np.cos(omega * t)))
         else:
-            t = 0.0
-        state_parts.append(t)
+            # Append zeros for consistency when time is not included
+            state_parts.append(0.0)
+            state_parts.append(0.0)
 
         return np.asarray(state_parts, dtype=np.float32)
 
@@ -160,7 +186,26 @@ class DifferentiableFishEnv(DifferentiableCartPoleEnv):
         return np.asarray(state_parts, dtype=np.float32)
 
     def apply_action(self, step, action_wp, tape=None):
-        # For fish we treat action as a delta angular velocity applied to the fish body
+        # 两段鱼（body != tail）→ 关节力矩模式：等大反向作用于 body 和 tail
+        if self.body_rigid_id != self.tail_rigid_id:
+            if tape is None:
+                wp.launch(
+                    kernel=add_joint_torque_omega_kernel,
+                    dim=1,
+                    inputs=[action_wp, self.body_rigid_id, self.tail_rigid_id],
+                    outputs=[self.sim.rigid_omega_arrays[step]],
+                )
+                return
+            with tape:
+                wp.launch(
+                    kernel=add_joint_torque_omega_kernel,
+                    dim=1,
+                    inputs=[action_wp, self.body_rigid_id, self.tail_rigid_id],
+                    outputs=[self.sim.rigid_omega_arrays[step]],
+                )
+            return
+
+        # 单段鱼 → 原行为：只控制 body
         if tape is None:
             wp.launch(
                 kernel=add_control_delta_omega_kernel,
@@ -178,8 +223,7 @@ class DifferentiableFishEnv(DifferentiableCartPoleEnv):
                 outputs=[self.sim.rigid_omega_arrays[step]],
             )
 
-    # keep CartPoleEnv's _action_to_wp_vec3 signature
-    def _action_to_wp_vec3(self, action_xyz):
+    def _action_to_wp_vec3(self, action_scalar):
         target_device = torch.device(str(self.sim.rigid_omega_arrays[0].device))
-        action_torch = action_xyz.reshape(1, 3).to(device=target_device, dtype=torch.float32)
-        return wp.from_torch(action_torch, dtype=wp.vec3, requires_grad=True)
+        action_torch = action_scalar.reshape(1).to(device=target_device, dtype=torch.float32)
+        return wp.from_torch(action_torch, dtype=wp.float32, requires_grad=True)

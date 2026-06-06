@@ -5,9 +5,9 @@ from torch import nn
 class Controller(nn.Module):
     def __init__(self, action_min=None, action_max=None) -> None:
         super().__init__()
-        self.dim = 3
+        self.dim = 1
         self.intput_dim = 27
-        self.output_dim = 3
+        self.output_dim = 1
 
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(self.intput_dim, 64),
@@ -20,9 +20,9 @@ class Controller(nn.Module):
         )
 
         if action_min is None:
-            action_min = [-0.5, -0.5, -0.5]
+            action_min = [-0.5]
         if action_max is None:
-            action_max = [0.5, 0.0, 0.5]
+            action_max = [0.5]
 
         self.register_buffer("action_min", torch.tensor(action_min, dtype=torch.float32))
         self.register_buffer("action_max", torch.tensor(action_max, dtype=torch.float32))
@@ -70,4 +70,4 @@ class Controller2D(nn.Module):
                          min = torch.Tensor([self.vx_min, self.vy_min]), 
                          max = torch.Tensor([self.vx_max, self.vy_max]))
 
-        return control_signal 
+        return control_signal

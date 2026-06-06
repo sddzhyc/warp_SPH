@@ -88,7 +88,11 @@ class FishTask(Task):
 
         self.body_rigid_id = body_id
         self.tail_rigid_id = tail_id
-        self.state_rigid_ids = [self.body_rigid_id]
+        # 两段鱼时 state 应包含 body + tail；单段时只含 body
+        if body_id != tail_id:
+            self.state_rigid_ids = [self.body_rigid_id, self.tail_rigid_id]
+        else:
+            self.state_rigid_ids = [self.body_rigid_id]
 
     def init_targets(self):
         # Prepare target rigid quaternion array. Prefer direct quaternion from JSON.

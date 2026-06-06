@@ -79,7 +79,7 @@ class ControllerWithFluid(nn.Module):
 
 if __name__ == '__main__':
     # quick smoke test
-    c = ControllerWithFluid(state_dim=12, ae_feat_dim=64, action_dim=2)
+    c = ControllerWithFluid(state_dim=12, ae_feat_dim=64, action_dim=1)
     s = torch.randn(12)
     f = torch.randn(64)
     print(c(s, f))

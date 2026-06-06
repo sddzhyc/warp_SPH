@@ -115,9 +115,15 @@ class DifferentiableCartPoleEnv:
 
         if self.include_time:
             t = float(step) * float(self.sim.frame_dt)
+            # Use sin/cos encoding for time synchronized with wave boundary frequency
+            # waveBoundaryFrequency = 1.0 Hz -> period = 1.0 second
+            omega = 2.0 * np.pi / 1.0  # Period = 1.0s (matches wave boundary frequency)
+            state_parts.append(float(np.sin(omega * t)))
+            state_parts.append(float(np.cos(omega * t)))
         else:
-            t = 0.0
-        state_parts.append(t)
+            # Append zeros for consistency when time is not included
+            state_parts.append(0.0)
+            state_parts.append(0.0)
 
         return np.asarray(state_parts, dtype=np.float32)
 
