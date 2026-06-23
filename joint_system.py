@@ -18,6 +18,9 @@ class ArticulatedJoints:
 	# joint type: 0=spherical, 1=revolute (spherical + orientation)
 	joint_type: wp.array(dtype=wp.int32)
 	inv_stiffness: wp.array(dtype=wp.float32)
+	# angle limits for revolute joint (radians), only applied when min < max
+	angle_limit_min: wp.array(dtype=wp.float32)
+	angle_limit_max: wp.array(dtype=wp.float32)
 
 
 @wp.func
@@ -238,6 +241,53 @@ def solve_articulated_joints_impulse_inplace(
 		)
 		delta_omega_parent = delta_omega_parent + rot_domega_parent
 		delta_omega_child = delta_omega_child + rot_domega_child
+
+		angle_limit_min = joints.angle_limit_min[tid]
+		angle_limit_max = joints.angle_limit_max[tid]
+		if angle_limit_min < angle_limit_max and dt > wp.float32(1.0e-12):
+			qb = rigid_quaternion[parent]
+			qt = rigid_quaternion[child]
+			qb_x = qb[0]
+			qb_y = qb[1]
+			qb_z = qb[2]
+			qb_w = qb[3]
+			qt_x = qt[0]
+			qt_y = qt[1]
+			qt_z = qt[2]
+			qt_w = qt[3]
+
+			# q_rel = q_parent^{-1} * q_child, expressed in the parent frame.
+			qr_w = qb_w * qt_w + qb_x * qt_x + qb_y * qt_y + qb_z * qt_z
+			qr_x = qb_w * qt_x - qb_x * qt_w - qb_y * qt_z + qb_z * qt_y
+			qr_y = qb_w * qt_y + qb_x * qt_z - qb_y * qt_w - qb_z * qt_x
+			qr_z = qb_w * qt_z - qb_x * qt_y + qb_y * qt_x - qb_z * qt_w
+
+			axis_parent_local = joints.parent_axis_local[tid]
+			axis_len = wp.length(axis_parent_local)
+			if axis_len > wp.float32(1.0e-8):
+				axis_local = axis_parent_local / axis_len
+				axis_angle_part = qr_x * axis_local[0] + qr_y * axis_local[1] + qr_z * axis_local[2]
+				joint_angle = 2.0 * wp.atan2(axis_angle_part, qr_w)
+				if joint_angle > wp.pi:
+					joint_angle = joint_angle - 2.0 * wp.pi
+				elif joint_angle < -wp.pi:
+					joint_angle = joint_angle + 2.0 * wp.pi
+
+				excess = wp.float32(0.0)
+				if joint_angle > angle_limit_max:
+					excess = joint_angle - angle_limit_max
+				elif joint_angle < angle_limit_min:
+					excess = joint_angle - angle_limit_min
+
+				if wp.abs(excess) > wp.float32(1.0e-8):
+					axis_world = wp.normalize(wp.quat_to_matrix(q_parent_rel) @ axis_local)
+					denom = wp.dot(axis_world, rigid_inv_inertia[parent] @ axis_world) + wp.dot(axis_world, rigid_inv_inertia[child] @ axis_world)
+					if denom > wp.float32(1.0e-12):
+						beta = wp.float32(0.2)
+						ang_impulse_mag = beta * excess / (dt * denom)
+						ang_impulse = ang_impulse_mag * axis_world
+						delta_omega_parent = delta_omega_parent + rigid_inv_inertia[parent] @ ang_impulse
+						delta_omega_child = delta_omega_child - rigid_inv_inertia[child] @ ang_impulse
 
 	wp.atomic_add(rigid_delta_v_out, parent, delta_v_parent)
 	wp.atomic_add(rigid_delta_v_out, child, delta_v_child)

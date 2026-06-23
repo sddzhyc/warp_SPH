@@ -48,12 +48,12 @@ def save_fluid_velocity_field(file_path, velocity_field, weight=None, metadata=N
 def build_grad_mode_info(args):
     grad_mode_info = ""
     if args.difffr:
-        grad_mode_info += "difffr/"
+        grad_mode_info += "difffr_"
     if args.custom_grad:
         if use_const_2order_grad:
-            grad_mode_info += f"g2_custom_const{custom_grad_scale}/"
+            grad_mode_info += f"g2_custom_const{custom_grad_scale}_"
         else:
-            grad_mode_info += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}/"
+            grad_mode_info += f"g2_custom_h{custom_h_scale}_g{custom_grad_scale}_"
     else:
         grad_mode_info += "g2/"
     if args.norm_grad:
@@ -110,9 +110,37 @@ def build_default_log_dir(args, end_time=None):
 
 
 def build_controller_run_tag(args):
-    time_tag = "time_in_state" if bool(args.time_in_state) else "no_t"
-    loss_threshold_tag = f"max_loss_{float(args.loss_threshold):g}"
-    return f"{time_tag}_{loss_threshold_tag}"
+    time_tag = "t_in_state" if bool(args.time_in_state) else "no_t"
+    # loss_threshold_tag = f"max_loss_{float(args.loss_threshold):g}"
+    loss_threshold_tag = f""
+
+    param_tags = []
+    if bool(getattr(args, "omega_action", False)):
+        param_tags.append("omega_action")
+    elif bool(getattr(args, "sine_action", False)):
+        param_tags.append("sine_action")
+    else:
+        param_tags.append("torque_action")
+
+    if bool(getattr(args, "use_v_loss", False)):
+        param_tags.append("v_loss")
+    if bool(getattr(args, "use_x_loss", False)):
+        param_tags.append("x_loss")
+    if bool(getattr(args, "no_pose_loss", False)):
+        param_tags.append("no_pose_loss")
+    if bool(getattr(args, "use_tail_periodic_loss", False)):
+        param_tags.append("tail_periodic_loss")
+    if bool(getattr(args, "use_fluid", False)):
+        param_tags.append("fluid")
+    if bool(getattr(args, "add_gru", False)):
+        param_tags.append("gru")
+    if bool(getattr(args, "use_relative_state", False)):
+        param_tags.append("relative_state")
+    if bool(getattr(args, "lr_scheduler", False)):
+        param_tags.append("lr_scheduler")
+
+    param_tag = "_".join(param_tags)
+    return f"{time_tag}_{loss_threshold_tag}{param_tag}"
 
 
 def build_checkpoint_dir(args, end_time=None):

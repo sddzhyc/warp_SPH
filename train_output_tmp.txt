@@ -1,0 +1,591 @@
+D:\SoftWare\python-3.9\lib\site-packages\warp\_src\torch.py:264: UserWarning: The .grad attribute of a Tensor that is not a leaf Tensor is being accessed. Its .grad attribute won't be populated during autograd.backward(). If you indeed want the .grad field to be populated for a non-leaf Tensor, use .retain_grad() on the non-leaf Tensor. If you access the non-leaf Tensor by mistake, make sure you access the leaf Tensor instead. See github.com/pytorch/pytorch/pull/30531 for more informations. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\build\aten\src\ATen/core/TensorBody.h:494.)
+  if t.grad is not None:
+Using 0-order gradient for cubic_kernel_derivative_custom
+Using replay kernel for cubic_kernel_derivative_custom
+Using sim_steps: 3125
+segment_steps: 751
+Warp 1.10.0 initialized:
+   CUDA Toolkit 12.8, Driver 12.6
+   Devices:
+     "cpu"      : "Intel64 Family 6 Model 79 Stepping 1, GenuineIntel"
+     "cuda:0"   : "NVIDIA GeForce RTX 3080 Ti" (12 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     \\?\C:\Users\admin\AppData\Local\NVIDIA\warp\Cache\1.10.0
+Using DFSPH implementation: no_fluid_tape
+----------------------------------------------------------------
+m_V0 = 0.0001124864, base_density = 1000, particle_mass = 0.1124864, smoothing_length = 0.104stiffness = 7000, exponent = 7
+----------------------------------------------------------------
+grid size:  [21 20 21]
+Total fluid particles: 160085, total rigid particles: 453, total allocated: 160538
+Particle max num: 160538
+Module kernel_utils 10c409f load on device 'cuda:0' took 1.76 ms  (cached)
+total particles after fluid blocks: 160085
+total particles after rigid blocks: 160085
+total particles after rigid bodies: 160538
+Module rigid_fluid_coupling 19102ee load on device 'cuda:0' took 2.04 ms  (cached)
+Initialized articulated joints: 1
+n: 160538, x shape: (160538,)
+[rbs] num=2
+ id=1 mass=35.635719 pos=[ 0.23422247  1.4398056  -0.00698244] rest_cm=[ 0.23422247  1.4398056  -0.00698244]
+ vel=[0. 0. 0.] omega=[0. 0. 0.] quat=[0. 0. 0. 1.]
+ id=2 mass=20.416317 pos=[-0.2383802   1.4399637  -0.02048085] rest_cm=[-0.2383802   1.4399637  -0.02048085]
+ vel=[0. 0. 0.] omega=[0. 0. 0.] quat=[0. 0. 0. 1.]
+Initialized differentiable simulation for 751 steps (no segments).
+Initializing FishTaskNew (body+tail joint fish) based on scene_file.
+TensorBoard logging to runs/fish_on_water_new/h1.0/hg2/et5.0/controller/direct_mode/difffr_g2_custom_const0.0__normed/20260610-095152_lr_5e-05\interval_15\t_in_state_
+Checkpoint directory: checkpoints/et5.0/difffr_g2_custom_const0.0__normed/20260610-095152_lr_5e-05\interval_15\t_in_state_
+Using backwardInterval (signal spans): 15
+[task] Detected task 'FishTaskNew', using DifferentiableFishEnv with angular velocity control and symmetric action bounds.
+[Robot Env] Initialized DifferentiableFishEnv with control_interval=50, backward_interval=15, use_relative_state=True, sine_action=True, wave_freq=1.0, pd_kp=50.0, pd_kd=5.0
+[task] Resolving action bounds for FishTask with bladder (sine, action_dim=3)
+[task]   sine bounds: freq=[0.0, 8.0] Hz, amp=[0.05, 1.5] rad
+[task]   bladder delta-v bounds: [-5.0e-02, 5.0e-02] m^3/s
+[task] Resolving action bounds for FishTask with bladder (sine, action_dim=3)
+[task]   sine bounds: freq=[0.0, 8.0] Hz, amp=[0.05, 1.5] rad
+[task]   bladder delta-v bounds: [-5.0e-02, 5.0e-02] m^3/s
+[load_ckpt] Loaded controller checkpoint from: checkpoints/et3.0/difffr_g2_custom_const0.0__normed/20260610-010831_lr_0.0001\interval_15\t_in_state_\model_best_loss_1.389489e-03.pth  (params_changed=0, params_unchanged=16)
+[load_ckpt] *** WARNING *** no parameter changed after load_state_dict ¡ª checkpoint may have identical weights or loading silently failed!
+Module tasks.fish_task 57ba473 load on device 'cuda:0' took 3.43 ms  (cached)
+Module sph_kernel_diff bf3ecde load on device 'cuda:0' took 2.37 ms  (cached)
+Module dfsph_kernel 3bd5f0a load on device 'cuda:0' took 2.87 ms  (cached)
+Module SimSPH 2722c95 load on device 'cuda:0' took 2.56 ms  (cached)
+Module joint_system 94d36bd load on device 'cuda:0' took 4.08 ms  (cached)
+Module robots.pd_controller 113d79f load on device 'cuda:0' took 1.87 ms  (cached)
+Module robots.FishEnv 8484f40 load on device 'cuda:0' took 1.74 ms  (cached)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5370 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6627 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7967 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7916 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7067 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6720 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6898 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6929 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6762 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6442 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5984 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5692 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5363 (eta_press=0.5000)
+Module tasks.fish_task_new 79f9f50 load on device 'cuda:0' took 2.00 ms  (cached)
+[action step] step=11 time=0.0176 rod_quat=[-2.7650269e-04 -2.0183307e-04 -5.0237244e-03  9.9998730e-01] action=[nan nan nan] fwd_vel=0.0837 body_v=(0.082,-0.128,-0.011) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0005 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=61 time=0.0976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0660 body_v=(0.066,0.223,0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=111 time=0.1776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0509 body_v=(-0.051,-0.158,-0.102) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=161 time=0.2576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1638 body_v=(-0.164,-1.348,0.038) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=211 time=0.3376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1159 body_v=(-0.116,-1.298,0.133) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=261 time=0.4176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0494 body_v=(0.049,-0.613,-0.150) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=311 time=0.49760000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1186 body_v=(0.119,-1.203,-0.058) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=361 time=0.5776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0616 body_v=(0.062,-2.305,0.189) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=411 time=0.6576000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0047 body_v=(-0.005,-2.078,-0.044) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=461 time=0.7376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0716 body_v=(-0.072,-1.449,-0.112) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=511 time=0.8176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1321 body_v=(-0.132,-2.231,0.054) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=561 time=0.8976000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0906 body_v=(-0.091,-3.254,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=611 time=0.9776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0538 body_v=(0.054,-2.807,0.023) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.6110948e+34]
+[action step] step=661 time=1.0576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1473 body_v=(0.147,-2.335,-0.038) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -2.319118e+19]
+[action step] step=711 time=1.1376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0709 body_v=(0.071,-3.323,-0.074) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -20597.906]
+Backward Propagation took 78192.07 ms
+[action step] step=761 time=1.2176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0777 body_v=(-0.078,-4.130,0.140) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=811 time=1.2976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1227 body_v=(-0.123,-3.535,0.016) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=861 time=1.3776000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0798 body_v=(-0.080,-3.271,-0.195) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=911 time=1.4576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0313 body_v=(-0.031,-4.352,0.089) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=961 time=1.5376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0544 body_v=(0.054,-4.993,0.126) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1011 time=1.6176000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1298 body_v=(0.130,-4.314,-0.124) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1061 time=1.6976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0607 body_v=(0.061,-4.213,-0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1111 time=1.7776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0997 body_v=(-0.100,-5.400,0.056) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1161 time=1.8576000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1619 body_v=(-0.162,-5.821,0.003) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1211 time=1.9376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0696 body_v=(-0.070,-5.044,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1261 time=2.0176000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0514 body_v=(0.051,-5.219,-0.094) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1311 time=2.0976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0861 body_v=(0.086,-6.441,0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1361 time=2.1776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0665 body_v=(0.067,-6.596,0.160) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.6110948e+34]
+[action step] step=1411 time=2.2576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0205 body_v=(0.020,-5.855,-0.122) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -2.319118e+19]
+[action step] step=1461 time=2.3376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0908 body_v=(-0.091,-6.237,-0.108) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -20597.906]
+Backward Propagation took 78658.21 ms
+[action step] step=1511 time=2.4176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1648 body_v=(-0.165,-7.402,0.172) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1561 time=2.4976000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0635 body_v=(-0.064,-7.379,-0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1611 time=2.5776000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0964 body_v=(0.096,-6.674,-0.117) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1661 time=2.6576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1240 body_v=(0.124,-7.269,0.053) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1711 time=2.7376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0325 body_v=(0.032,-8.398,0.032) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1761 time=2.8176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0592 body_v=(-0.059,-8.120,0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1811 time=2.8976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1005 body_v=(-0.100,-7.502,-0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1861 time=2.9776000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1037 body_v=(-0.104,-8.338,-0.099) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1911 time=3.0576000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0431 body_v=(-0.043,-9.309,0.122) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1961 time=3.1376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0908 body_v=(0.091,-8.857,0.066) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2011 time=3.2176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1465 body_v=(0.147,-8.427,-0.187) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2061 time=3.2976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0184 body_v=(0.018,-9.383,0.051) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2111 time=3.3776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1249 body_v=(-0.125,-10.191,0.143) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.6110948e+34]
+[action step] step=2161 time=3.4576000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1251 body_v=(-0.125,-9.612,-0.119) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -2.319118e+19]
+[action step] step=2211 time=3.5376000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0491 body_v=(-0.049,-9.324,-0.048) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -20597.906]
+Backward Propagation took 91330.52 ms
+[action step] step=2261 time=3.6176000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0214 body_v=(0.021,-10.438,0.062) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2311 time=3.6976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0830 body_v=(0.083,-11.074,0.018) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2361 time=3.7776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0995 body_v=(0.100,-10.346,0.028) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2411 time=3.8576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0112 body_v=(0.011,-10.297,-0.087) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2461 time=3.9376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1337 body_v=(-0.134,-11.490,-0.023) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2511 time=4.0176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1589 body_v=(-0.159,-11.857,0.159) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2561 time=4.0976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0175 body_v=(-0.018,-11.121,-0.087) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2611 time=4.1776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0990 body_v=(0.099,-11.303,-0.134) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2661 time=4.2576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0860 body_v=(0.086,-12.495,0.170) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2711 time=4.3376 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0338 body_v=(0.034,-12.675,0.032) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2761 time=4.4176 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0305 body_v=(-0.031,-11.914,-0.132) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2811 time=4.4976 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1188 body_v=(-0.119,-12.291,0.024) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2861 time=4.5776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1327 body_v=(-0.133,-13.499,0.030) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.6110948e+34]
+[action step] step=2911 time=4.6576 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0121 body_v=(-0.012,-13.434,0.022) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -2.319118e+19]
+[action step] step=2961 time=4.7376000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1270 body_v=(0.127,-12.722,-0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -20597.906]
+Backward Propagation took 94361.48 ms
+[action step] step=3011 time=4.8176000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1191 body_v=(0.119,-13.369,-0.101) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -7.781669e+26]
+[action step] step=3061 time=4.897600000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0188 body_v=(-0.019,-14.459,0.098) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -6.9115104e+11]
+[action step] step=3111 time=4.9776 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1074 body_v=(-0.107,-14.164,0.093) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.0006116]
+Backward Propagation took 6584.22 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0000 | avg_loss=2.206144e-01 | controls=63 | segments=5 | avg_action_grad_norm=nan
+Saved best model to: checkpoints/et5.0/difffr_g2_custom_const0.0__normed/20260610-095152_lr_5e-05\interval_15\t_in_state_\model_best_loss_2.206144e-01.pth
+[action step] step=27 time=0.0432 rod_quat=[-1.0419041e-03 -6.3163601e-04 -1.1837010e-02  9.9992919e-01] action=[nan nan nan] fwd_vel=0.0609 body_v=(0.052,-0.405,-0.011) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0015 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=77 time=0.1232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0505 body_v=(0.050,0.768,0.002) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=127 time=0.20320000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0873 body_v=(-0.087,0.128,-0.266) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=177 time=0.2832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2344 body_v=(-0.234,-2.436,0.139) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=227 time=0.3632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1096 body_v=(-0.110,-1.976,0.314) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=277 time=0.44320000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1674 body_v=(0.167,0.009,-0.380) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=327 time=0.5232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1822 body_v=(0.182,-1.113,-0.108) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=377 time=0.6032000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0046 body_v=(-0.005,-3.466,0.428) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=427 time=0.6832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0750 body_v=(-0.075,-2.572,-0.120) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=477 time=0.7632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0831 body_v=(-0.083,-0.734,-0.234) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=527 time=0.8432000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1356 body_v=(-0.136,-2.348,0.113) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=577 time=0.9232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0834 body_v=(-0.083,-4.493,0.057) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=627 time=1.0032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1182 body_v=(0.118,-3.054,0.082) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.9842145e+29]
+[action step] step=677 time=1.0832000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2211 body_v=(0.221,-1.605,-0.132) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.5386933e+14]
+NaN or Inf found in input tensor.
+[action step] step=727 time=1.1632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0341 body_v=(0.034,-3.698,-0.174) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.3142935]
+Backward Propagation took 77688.17 ms
+[action step] step=777 time=1.2432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1987 body_v=(-0.199,-5.320,0.363) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=827 time=1.3232000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1566 body_v=(-0.157,-3.555,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=877 time=1.4032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0104 body_v=(-0.010,-2.606,-0.447) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=927 time=1.4832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0116 body_v=(0.012,-4.920,0.241) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=977 time=1.5632000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0665 body_v=(0.066,-6.136,0.267) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1027 time=1.6432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1598 body_v=(0.160,-4.140,-0.287) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1077 time=1.7232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0454 body_v=(0.045,-3.600,-0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1127 time=1.8032000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1924 body_v=(-0.192,-6.187,0.108) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1177 time=1.8832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2223 body_v=(-0.222,-6.858,0.045) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1227 time=1.9632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0040 body_v=(-0.004,-4.647,0.032) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1277 time=2.0432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1585 body_v=(0.158,-4.774,-0.253) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1327 time=2.1232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0940 body_v=(0.094,-7.411,0.078) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1377 time=2.2032000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0101 body_v=(0.010,-7.446,0.372) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.9842145e+29]
+[action step] step=1427 time=2.2832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0010 body_v=(-0.001,-5.327,-0.324) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.5386933e+14]
+[action step] step=1477 time=2.3632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1189 body_v=(-0.119,-5.959,-0.220) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.3142935]
+Backward Propagation took 79049.81 ms
+[action step] step=1527 time=2.4432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2139 body_v=(-0.214,-8.481,0.413) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1577 time=2.5232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0263 body_v=(-0.026,-8.073,-0.038) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1627 time=2.6032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2078 body_v=(0.208,-6.027,-0.252) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1677 time=2.6832000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1579 body_v=(0.158,-7.178,0.101) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1727 time=2.7632000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0513 body_v=(-0.051,-9.599,0.066) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1777 time=2.8432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1401 body_v=(-0.140,-8.575,0.077) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1827 time=2.9232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0945 body_v=(-0.094,-6.775,-0.107) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1877 time=3.0032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0716 body_v=(-0.072,-8.504,-0.230) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1927 time=3.0832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0297 body_v=(-0.030,-10.525,0.331) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1977 time=3.1632000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1439 body_v=(0.144,-9.085,0.122) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2027 time=3.2432000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1996 body_v=(0.200,-7.722,-0.453) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2077 time=3.3232000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0481 body_v=(-0.048,-9.744,0.147) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2127 time=3.4032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2398 body_v=(-0.240,-11.389,0.316) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.9842145e+29]
+[action step] step=2177 time=3.4832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1271 body_v=(-0.127,-9.635,-0.266) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.5386933e+14]
+[action step] step=2227 time=3.5632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0365 body_v=(0.036,-8.632,-0.092) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.3142935]
+Backward Propagation took 90060.15 ms
+[action step] step=2277 time=3.6432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0723 body_v=(0.072,-11.038,0.120) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2327 time=3.7232000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0798 body_v=(0.080,-12.224,0.061) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2377 time=3.8032000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0937 body_v=(0.094,-10.123,0.067) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2427 time=3.8832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0113 body_v=(-0.011,-9.713,-0.248) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2477 time=3.9632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2117 body_v=(-0.212,-12.298,-0.017) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2527 time=4.043200000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1994 body_v=(-0.199,-12.855,0.395) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2577 time=4.1232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0756 body_v=(0.076,-10.739,-0.238) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2627 time=4.2032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2005 body_v=(0.200,-10.871,-0.291) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2677 time=4.2832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0606 body_v=(0.061,-13.449,0.399) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2727 time=4.3632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0382 body_v=(-0.038,-13.539,0.046) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2777 time=4.4432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0570 body_v=(-0.057,-11.367,-0.285) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2827 time=4.5232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1330 body_v=(-0.133,-12.010,0.053) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2877 time=4.6032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1462 body_v=(-0.146,-14.622,0.068) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.9842145e+29]
+[action step] step=2927 time=4.6832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0338 body_v=(0.034,-14.096,0.090) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.5386933e+14]
+[action step] step=2977 time=4.7632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2213 body_v=(0.221,-12.050,-0.049) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.3142935]
+Backward Propagation took 92054.85 ms
+[action step] step=3027 time=4.8432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1325 body_v=(0.133,-13.333,-0.256) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.1873885e+22]
+[action step] step=3077 time=4.9232000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1276 body_v=(-0.128,-15.640,0.269) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -10546128.]
+Backward Propagation took 8147.00 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0001 | avg_loss=1.423859e-01 | controls=62 | segments=5 | avg_action_grad_norm=nan
+Saved best model to: checkpoints/et5.0/difffr_g2_custom_const0.0__normed/20260610-095152_lr_5e-05\interval_15\t_in_state_\model_best_loss_1.423859e-01.pth
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5284 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5504 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6129 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6617 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6660 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6566 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6483 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6264 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6084 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5764 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5246 (eta_press=0.5000)
+[action step] step=6 time=0.009600000000000001 rod_quat=[-1.2922197e-04 -2.0692077e-04 -3.0611579e-03  9.9999535e-01] action=[nan nan nan] fwd_vel=0.0341 body_v=(0.034,-0.072,-0.005) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0004 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=56 time=0.0896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0198 body_v=(-0.020,0.020,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=106 time=0.1696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0816 body_v=(-0.082,-0.191,-0.068) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=156 time=0.24960000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1047 body_v=(-0.105,-0.977,0.013) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=206 time=0.3296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0335 body_v=(-0.034,-1.149,0.088) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=256 time=0.4096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0776 body_v=(0.078,-0.835,-0.077) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=306 time=0.48960000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0915 body_v=(0.091,-1.167,-0.043) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=356 time=0.5696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0056 body_v=(0.006,-1.922,0.103) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=406 time=0.6496000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0668 body_v=(-0.067,-1.984,-0.018) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=456 time=0.7296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0857 body_v=(-0.086,-1.679,-0.063) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=506 time=0.8096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0662 body_v=(-0.066,-2.132,0.021) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=556 time=0.8896000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0043 body_v=(-0.004,-2.869,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=606 time=0.9696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0721 body_v=(0.072,-2.795,0.025) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -8.3555034e+35]
+[action step] step=656 time=1.0496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0858 body_v=(0.086,-2.555,-0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -7.421178e+20]
+[action step] step=706 time=1.1296000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0022 body_v=(-0.002,-3.138,-0.056) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[     nan      nan -659133.]
+Backward Propagation took 79562.97 ms
+[action step] step=756 time=1.2096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1045 body_v=(-0.104,-3.767,0.077) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=806 time=1.2896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1014 body_v=(-0.101,-3.593,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=856 time=1.3696000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0211 body_v=(-0.021,-3.460,-0.113) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=906 time=1.4496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0375 body_v=(0.037,-4.116,0.043) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=956 time=1.5296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0629 body_v=(0.063,-4.666,0.078) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1006 time=1.6096000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0535 body_v=(0.054,-4.421,-0.062) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1056 time=1.6896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0207 body_v=(-0.021,-4.364,-0.018) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1106 time=1.7696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1067 body_v=(-0.107,-5.101,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1156 time=1.8496000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1032 body_v=(-0.103,-5.538,0.006) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1206 time=1.9296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0042 body_v=(-0.004,-5.218,0.018) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1256 time=2.0096000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0817 body_v=(0.082,-5.314,-0.057) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1306 time=2.0896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0685 body_v=(0.069,-6.094,0.002) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1356 time=2.1696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0006 body_v=(0.001,-6.379,0.098) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -8.3555034e+35]
+[action step] step=1406 time=2.2496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0519 body_v=(-0.052,-6.051,-0.065) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -7.421178e+20]
+[action step] step=1456 time=2.3296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0894 body_v=(-0.089,-6.265,-0.073) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[     nan      nan -659133.]
+Backward Propagation took 77143.45 ms
+[action step] step=1506 time=2.4096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0818 body_v=(-0.082,-7.040,0.093) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1556 time=2.4896000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0090 body_v=(0.009,-7.226,0.006) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1606 time=2.5696000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0959 body_v=(0.096,-6.896,-0.061) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1656 time=2.6496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0717 body_v=(0.072,-7.231,0.021) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1706 time=2.7296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0292 body_v=(-0.029,-8.006,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1756 time=2.8096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0961 body_v=(-0.096,-8.039,0.017) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1806 time=2.8896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0820 body_v=(-0.082,-7.737,-0.017) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1856 time=2.9696000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0281 body_v=(-0.028,-8.223,-0.066) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1906 time=3.0496000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0279 body_v=(0.028,-8.933,0.070) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1956 time=3.1296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0775 body_v=(0.078,-8.852,0.051) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2006 time=3.2096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0620 body_v=(0.062,-8.634,-0.107) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2056 time=3.2896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0441 body_v=(-0.044,-9.200,0.015) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2106 time=3.3696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1221 body_v=(-0.122,-9.834,0.081) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -8.3555034e+35]
+[action step] step=2156 time=3.4496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0796 body_v=(-0.080,-9.667,-0.058) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -7.421178e+20]
+[action step] step=2206 time=3.5296000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0138 body_v=(0.014,-9.517,-0.028) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[     nan      nan -659133.]
+Backward Propagation took 89506.13 ms
+[action step] step=2256 time=3.6096000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0646 body_v=(0.065,-10.197,0.029) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2306 time=3.6896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0586 body_v=(0.059,-10.743,0.013) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2356 time=3.7696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0149 body_v=(0.015,-10.465,0.024) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2406 time=3.8496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0534 body_v=(-0.053,-10.437,-0.057) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2456 time=3.9296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1098 body_v=(-0.110,-11.184,-0.025) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2506 time=4.0096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0781 body_v=(-0.078,-11.591,0.097) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2556 time=4.0896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0367 body_v=(0.037,-11.291,-0.037) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2606 time=4.1696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0989 body_v=(0.099,-11.388,-0.082) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2656 time=4.2496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0448 body_v=(0.045,-12.156,0.088) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2706 time=4.3296 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0351 body_v=(-0.035,-12.453,0.024) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2756 time=4.4096 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0773 body_v=(-0.077,-12.110,-0.072) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2806 time=4.4896 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0841 body_v=(-0.084,-12.325,0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2856 time=4.5696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0425 body_v=(-0.043,-13.131,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -8.3555034e+35]
+[action step] step=2906 time=4.6496 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0421 body_v=(0.042,-13.287,0.024) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -7.421178e+20]
+[action step] step=2956 time=4.7296000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0966 body_v=(0.097,-12.948,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[     nan      nan -659133.]
+Backward Propagation took 92697.42 ms
+[action step] step=3006 time=4.8096000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0450 body_v=(0.045,-13.318,-0.068) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -2.490134e+28]
+[action step] step=3056 time=4.889600000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0694 body_v=(-0.069,-14.071,0.049) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.2116833e+13]
+[action step] step=3106 time=4.9696 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1124 body_v=(-0.112,-14.091,0.060) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[        nan         nan -0.01963975]
+Backward Propagation took 10786.39 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0002 | avg_loss=2.530380e-01 | controls=63 | segments=5 | avg_action_grad_norm=nan
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5240 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6464 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7913 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.9160 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.9339 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.8884 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.8262 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7732 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7545 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6950 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6703 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6240 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5746 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5246 (eta_press=0.5000)
+[action step] step=49 time=0.0784 rod_quat=[-0.00197537 -0.0012165  -0.02142917  0.9997677 ] action=[nan nan nan] fwd_vel=0.0053 body_v=(-0.026,-0.750,0.009) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0036 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=99 time=0.1584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0281 body_v=(0.028,1.568,-0.018) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=149 time=0.2384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0634 body_v=(-0.063,0.525,-0.474) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=199 time=0.3184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2422 body_v=(-0.242,-3.939,0.294) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=249 time=0.39840000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0687 body_v=(-0.069,-2.866,0.552) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=299 time=0.47840000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2754 body_v=(0.275,0.918,-0.689) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=349 time=0.5584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1730 body_v=(0.173,-0.985,-0.172) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=399 time=0.6384000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1527 body_v=(-0.153,-5.061,0.752) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=449 time=0.7184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1416 body_v=(-0.142,-3.199,-0.212) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=499 time=0.7984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0077 body_v=(-0.008,0.288,-0.398) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=549 time=0.8784000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0654 body_v=(-0.065,-2.520,0.198) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=599 time=0.9584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0761 body_v=(-0.076,-6.187,0.127) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=649 time=1.0384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1307 body_v=(0.131,-3.336,0.153) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -9.499108e+22]
+[action step] step=699 time=1.1184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2333 body_v=(0.233,-0.563,-0.270) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -84369024.]
+[action step] step=749 time=1.1984000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0463 body_v=(-0.046,-4.220,-0.292) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[nan nan  0.]
+Backward Propagation took 70232.82 ms
+[action step] step=799 time=1.2784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.3076 body_v=(-0.308,-6.946,0.670) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=849 time=1.3584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1067 body_v=(-0.107,-3.528,-0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=899 time=1.4384000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1377 body_v=(0.138,-1.664,-0.776) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=949 time=1.5184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0362 body_v=(0.036,-5.713,0.447) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=999 time=1.5984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0085 body_v=(-0.009,-7.681,0.460) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1049 time=1.6784000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1280 body_v=(0.128,-3.837,-0.506) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1099 time=1.7584000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0291 body_v=(0.029,-2.741,-0.079) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1149 time=1.8384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2421 body_v=(-0.242,-7.281,0.195) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1199 time=1.9184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2171 body_v=(-0.217,-8.254,0.120) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1249 time=1.9984000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1119 body_v=(0.112,-4.049,0.050) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1299 time=2.0784000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2440 body_v=(0.244,-4.149,-0.464) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1349 time=2.1584000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0079 body_v=(0.008,-8.746,0.169) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1399 time=2.2384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1165 body_v=(-0.116,-8.573,0.649) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -9.499108e+22]
+[action step] step=1449 time=2.3184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0065 body_v=(0.006,-4.551,-0.592) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -84369024.]
+[action step] step=1499 time=2.3984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0666 body_v=(-0.067,-5.577,-0.358) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[nan nan  0.]
+Backward Propagation took 79944.62 ms
+[action step] step=1549 time=2.4784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2102 body_v=(-0.210,-9.969,0.744) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1599 time=2.5584000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0175 body_v=(0.018,-8.978,-0.065) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1649 time=2.6384000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2803 body_v=(0.280,-5.089,-0.440) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1699 time=2.7184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1158 body_v=(0.116,-7.057,0.160) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1749 time=2.7984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1887 body_v=(-0.189,-11.240,0.130) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1799 time=2.8784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1865 body_v=(-0.187,-9.147,0.157) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1849 time=2.9584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0093 body_v=(0.009,-5.743,-0.210) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1899 time=3.0384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0175 body_v=(0.017,-8.744,-0.385) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1949 time=3.1184000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0510 body_v=(-0.051,-12.182,0.617) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1999 time=3.1984000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1253 body_v=(0.125,-9.337,0.185) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2049 time=3.2784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2021 body_v=(0.202,-6.717,-0.806) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2099 time=3.3584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1299 body_v=(-0.130,-10.256,0.280) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2149 time=3.4384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.3143 body_v=(-0.314,-13.017,0.559) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -9.499108e+22]
+[action step] step=2199 time=3.5184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0424 body_v=(-0.042,-9.609,-0.454) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -84369024.]
+[action step] step=2249 time=3.5984000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1721 body_v=(0.172,-7.657,-0.158) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[nan nan  0.]
+Backward Propagation took 90271.31 ms
+[action step] step=2299 time=3.6784000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0738 body_v=(0.074,-11.877,0.205) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2349 time=3.7584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0202 body_v=(-0.020,-13.773,0.130) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2399 time=3.8384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0431 body_v=(0.043,-9.753,0.104) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2449 time=3.9184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0010 body_v=(-0.001,-8.900,-0.457) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2499 time=3.9984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2274 body_v=(-0.227,-13.428,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2549 time=4.0784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1853 body_v=(-0.185,-14.193,0.712) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2599 time=4.1584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.1906 body_v=(0.191,-10.151,-0.442) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2649 time=4.2384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2531 body_v=(0.253,-10.267,-0.498) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2699 time=4.3184000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0614 body_v=(-0.061,-14.769,0.707) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2749 time=4.3984000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1512 body_v=(-0.151,-14.680,0.073) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2799 time=4.478400000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0239 body_v=(-0.024,-10.566,-0.490) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2849 time=4.5584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0590 body_v=(-0.059,-11.628,0.094) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2899 time=4.6384 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.1239 body_v=(-0.124,-16.164,0.140) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -9.499108e+22]
+[action step] step=2949 time=4.7184 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0524 body_v=(0.052,-14.955,0.181) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -84369024.]
+[action step] step=2999 time=4.7984 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.2559 body_v=(0.256,-11.083,-0.119) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[nan nan  0.]
+Backward Propagation took 95188.66 ms
+[action step] step=3049 time=4.8784 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0832 body_v=(0.083,-13.278,-0.455) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -2.8309547e+15]
+[action step] step=3099 time=4.9584 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.2601 body_v=(-0.260,-17.263,0.511) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -2.5143862]
+Backward Propagation took 15623.40 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0003 | avg_loss=2.417320e-01 | controls=62 | segments=5 | avg_action_grad_norm=nan
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5360 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5529 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5375 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5023 (eta_press=0.5000)
+[action step] step=2 time=0.0032 rod_quat=[-1.5414708e-04 -3.6709778e-05 -1.5768991e-03  9.9999881e-01] action=[nan nan nan] fwd_vel=-0.0322 body_v=(-0.032,-0.058,0.002) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0001 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=52 time=0.08320000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0352 body_v=(-0.035,-0.098,0.006) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=102 time=0.1632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0050 body_v=(-0.005,-0.222,-0.031) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=152 time=0.2432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0084 body_v=(0.008,-0.731,-0.002) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=202 time=0.32320000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0106 body_v=(0.011,-1.021,0.049) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=252 time=0.4032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0085 body_v=(0.009,-0.961,-0.025) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=302 time=0.4832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-1.148,-0.039) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=352 time=0.5632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0502 body_v=(-0.050,-1.659,0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=402 time=0.6432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0382 body_v=(-0.038,-1.893,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=452 time=0.7232000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0046 body_v=(0.005,-1.825,-0.033) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=502 time=0.8032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0238 body_v=(0.024,-2.077,0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=552 time=0.8832000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0084 body_v=(0.008,-2.598,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=602 time=0.9632000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0134 body_v=(-0.013,-2.754,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=652 time=1.0432000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0265 body_v=(-0.027,-2.692,-0.009) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.1873885e+22]
+[action step] step=702 time=1.1232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0364 body_v=(-0.036,-3.021,-0.034) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -10546128.]
+Backward Propagation took 82966.89 ms
+[action step] step=752 time=1.2032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0322 body_v=(-0.032,-3.514,0.030) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=802 time=1.2832000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0026 body_v=(0.003,-3.607,0.027) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=852 time=1.3632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0319 body_v=(0.032,-3.583,-0.051) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=902 time=1.4432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0107 body_v=(0.011,-3.964,0.002) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=952 time=1.5232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0299 body_v=(-0.030,-4.423,0.044) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1002 time=1.6032000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0400 body_v=(-0.040,-4.463,-0.023) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1052 time=1.6832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0272 body_v=(-0.027,-4.469,-0.021) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1102 time=1.7632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0128 body_v=(-0.013,-4.909,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1152 time=1.8432000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0049 body_v=(0.005,-5.329,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1202 time=1.9232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0208 body_v=(0.021,-5.312,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1252 time=2.0032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0097 body_v=(0.010,-5.376,-0.027) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1302 time=2.0832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0309 body_v=(-0.031,-5.858,-0.013) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1352 time=2.1632000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0529 body_v=(-0.053,-6.208,0.047) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1402 time=2.2432000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0254 body_v=(-0.025,-6.166,-0.016) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.1873885e+22]
+[action step] step=1452 time=2.3232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0089 body_v=(0.009,-6.295,-0.045) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -10546128.]
+Backward Propagation took 76558.47 ms
+[action step] step=1502 time=2.4032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0133 body_v=(0.013,-6.796,0.038) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1552 time=2.4832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0066 body_v=(0.007,-7.092,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1602 time=2.5632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0041 body_v=(-0.004,-7.027,-0.033) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1652 time=2.6432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0296 body_v=(-0.030,-7.212,-0.003) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1702 time=2.7232000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0473 body_v=(-0.047,-7.736,0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1752 time=2.8032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0265 body_v=(-0.026,-7.959,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1802 time=2.8832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0156 body_v=(0.016,-7.887,-0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1852 time=2.9632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0277 body_v=(0.028,-8.155,-0.034) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1902 time=3.0432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0015 body_v=(-0.002,-8.665,0.023) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1952 time=3.1232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0275 body_v=(-0.028,-8.814,0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2002 time=3.2032000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0311 body_v=(-0.031,-8.765,-0.049) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2052 time=3.2832000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0316 body_v=(-0.032,-9.090,-0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2102 time=3.3632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0197 body_v=(-0.020,-9.580,0.046) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2152 time=3.4432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0139 body_v=(0.014,-9.678,-0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.1873885e+22]
+[action step] step=2202 time=3.5232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0285 body_v=(0.029,-9.647,-0.022) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -10546128.]
+Backward Propagation took 89363.75 ms
+[action step] step=2252 time=3.6032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0015 body_v=(-0.002,-10.034,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2302 time=3.6832000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0398 body_v=(-0.040,-10.494,0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2352 time=3.7632000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0429 body_v=(-0.043,-10.520,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2402 time=3.8432000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0176 body_v=(-0.018,-10.540,-0.023) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2452 time=3.9232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0012 body_v=(0.001,-10.988,-0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2502 time=4.0032000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0091 body_v=(0.009,-11.388,0.048) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2552 time=4.083200000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0154 body_v=(0.015,-11.375,-0.002) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2602 time=4.1632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0026 body_v=(-0.003,-11.454,-0.050) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2652 time=4.2432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0418 body_v=(-0.042,-11.924,0.027) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2702 time=4.3232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0491 body_v=(-0.049,-12.272,0.025) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2752 time=4.4032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0128 body_v=(-0.013,-12.235,-0.031) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2802 time=4.4832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0181 body_v=(0.018,-12.365,-0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2852 time=4.5632 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0157 body_v=(0.016,-12.869,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2902 time=4.6432 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0023 body_v=(-0.002,-13.152,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.1873885e+22]
+[action step] step=2952 time=4.7232 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-13.089,0.003) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -10546128.]
+Backward Propagation took 93380.55 ms
+[action step] step=3002 time=4.8032 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0335 body_v=(-0.034,-13.294,-0.036) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.9842145e+29]
+[action step] step=3052 time=4.8832 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0406 body_v=(-0.041,-13.801,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -3.5386933e+14]
+[action step] step=3102 time=4.9632000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0148 body_v=(-0.015,-14.014,0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[       nan        nan -0.3142935]
+Backward Propagation took 18645.64 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0004 | avg_loss=1.880293e-01 | controls=63 | segments=5 | avg_action_grad_norm=nan
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5195 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6053 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7017 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7524 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.8020 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7915 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7784 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7304 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7251 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6636 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5815 (eta_press=0.5000)
+[action step] step=3 time=0.0048000000000000004 rod_quat=[-1.6484079e-04  7.9844249e-06 -9.7443076e-04  9.9999952e-01] action=[nan nan nan] fwd_vel=-0.0419 body_v=(-0.042,-0.087,0.003) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=53 time=0.0848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0082 body_v=(0.008,-0.040,0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=103 time=0.1648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0270 body_v=(0.027,-0.228,-0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=153 time=0.24480000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0010 body_v=(0.001,-0.822,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=203 time=0.32480000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0252 body_v=(-0.025,-1.037,0.055) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=253 time=0.4048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0251 body_v=(-0.025,-0.900,-0.045) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=303 time=0.4848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0271 body_v=(-0.027,-1.169,-0.039) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=353 time=0.5648000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0268 body_v=(-0.027,-1.750,0.061) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=403 time=0.6448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0037 body_v=(0.004,-1.897,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=453 time=0.7248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0286 body_v=(0.029,-1.768,-0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=503 time=0.8048000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0053 body_v=(0.005,-2.115,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=553 time=0.8848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0352 body_v=(-0.035,-2.683,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=603 time=0.9648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0419 body_v=(-0.042,-2.736,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=653 time=1.0448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-2.640,-0.015) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=703 time=1.1248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0020 body_v=(-0.002,-3.079,-0.034) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 80187.17 ms
+[action step] step=753 time=1.2048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0015 body_v=(0.001,-3.593,0.046) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=803 time=1.2848000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0120 body_v=(0.012,-3.576,0.022) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=853 time=1.3648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0064 body_v=(0.006,-3.542,-0.068) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=903 time=1.4448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0329 body_v=(-0.033,-4.030,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=953 time=1.5248000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0513 body_v=(-0.051,-4.487,0.051) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1003 time=1.6048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-4.422,-0.037) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1053 time=1.6848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0153 body_v=(0.015,-4.442,-0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1103 time=1.7648000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0128 body_v=(0.013,-4.990,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1153 time=1.8448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0035 body_v=(-0.004,-5.380,0.009) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1203 time=1.9248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0129 body_v=(-0.013,-5.256,0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1253 time=2.0048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0250 body_v=(-0.025,-5.363,-0.036) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1303 time=2.0848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0399 body_v=(-0.040,-5.946,-0.006) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1353 time=2.1648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0244 body_v=(-0.024,-6.242,0.059) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1403 time=2.2448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0189 body_v=(0.019,-6.110,-0.030) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=1453 time=2.3248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0268 body_v=(0.027,-6.302,-0.048) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 70519.29 ms
+[action step] step=1503 time=2.4048000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0110 body_v=(-0.011,-6.886,0.056) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1553 time=2.4848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0340 body_v=(-0.034,-7.108,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1603 time=2.5648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0277 body_v=(-0.028,-6.965,-0.047) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1653 time=2.6448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0217 body_v=(-0.022,-7.235,0.005) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1703 time=2.7248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0134 body_v=(-0.013,-7.829,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1753 time=2.8048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0094 body_v=(0.009,-7.960,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1803 time=2.8848000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0228 body_v=(0.023,-7.830,-0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1853 time=2.9648000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0041 body_v=(-0.004,-8.195,-0.039) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1903 time=3.0448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0450 body_v=(-0.045,-8.749,0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1953 time=3.1248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0416 body_v=(-0.042,-8.795,0.033) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2003 time=3.2048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0059 body_v=(-0.006,-8.717,-0.066) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2053 time=3.2848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0069 body_v=(0.007,-9.148,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2103 time=3.3648000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0033 body_v=(0.003,-9.658,0.060) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2153 time=3.4448000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0065 body_v=(0.007,-9.646,-0.028) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=2203 time=3.5248000000000004 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0070 body_v=(-0.007,-9.605,-0.027) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 87618.06 ms
+[action step] step=2253 time=3.6048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0387 body_v=(-0.039,-10.102,0.016) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2303 time=3.6848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0443 body_v=(-0.044,-10.561,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2353 time=3.7648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0085 body_v=(-0.008,-10.478,0.011) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2403 time=3.8448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0239 body_v=(0.024,-10.515,-0.029) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2453 time=3.9248000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0122 body_v=(0.012,-11.067,-0.015) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2503 time=4.0048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0159 body_v=(-0.016,-11.438,0.060) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2553 time=4.0848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0221 body_v=(-0.022,-11.325,-0.017) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2603 time=4.1648000000000005 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0256 body_v=(-0.026,-11.437,-0.061) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2653 time=4.244800000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0340 body_v=(-0.034,-12.010,0.047) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2703 time=4.324800000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0113 body_v=(-0.011,-12.312,0.025) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2753 time=4.4048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0245 body_v=(0.024,-12.179,-0.043) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2803 time=4.4848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0188 body_v=(0.019,-12.364,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2853 time=4.5648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0209 body_v=(-0.021,-12.960,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2903 time=4.6448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0416 body_v=(-0.042,-13.174,0.010) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=2953 time=4.7248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0271 body_v=(-0.027,-13.027,-0.003) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 90547.33 ms
+[action step] step=3003 time=4.8048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0090 body_v=(-0.009,-13.312,-0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.9921073e+29]
+[action step] step=3053 time=4.8848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0037 body_v=(-0.004,-13.895,0.026) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[           nan            nan -1.7693467e+14]
+[action step] step=3103 time=4.9648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0092 body_v=(0.009,-14.019,0.047) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[        nan         nan -0.15714438]
+Backward Propagation took 18194.62 ms
+[LR] Current LR: 5.000000e-05
+Epoch 0005 | avg_loss=1.773158e-01 | controls=63 | segments=5 | avg_action_grad_norm=nan
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5195 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6053 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7017 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7524 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.8020 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7915 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7784 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7304 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.7251 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.6636 (eta_press=0.5000)
+[DFSPH warning] pressure_solve reached m_max_iterations=5 with avg_err_press=0.5815 (eta_press=0.5000)
+[action step] step=3 time=0.0048000000000000004 rod_quat=[-1.6484079e-04  7.9844249e-06 -9.7443076e-04  9.9999952e-01] action=[nan nan nan] fwd_vel=-0.0419 body_v=(-0.042,-0.087,0.003) bladder_v=0.000e+00 buoy_f=0.0000 joint_angle=-0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=53 time=0.0848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0082 body_v=(0.008,-0.040,0.004) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=103 time=0.1648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0270 body_v=(0.027,-0.228,-0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=153 time=0.24480000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0010 body_v=(0.001,-0.822,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=203 time=0.32480000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0252 body_v=(-0.025,-1.037,0.055) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=253 time=0.4048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0251 body_v=(-0.025,-0.900,-0.045) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=303 time=0.4848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0271 body_v=(-0.027,-1.169,-0.039) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=353 time=0.5648000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0268 body_v=(-0.027,-1.750,0.061) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=403 time=0.6448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0037 body_v=(0.004,-1.897,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+NaN or Inf found in input tensor.
+[action step] step=453 time=0.7248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0286 body_v=(0.029,-1.768,-0.042) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=503 time=0.8048000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0053 body_v=(0.005,-2.115,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=553 time=0.8848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0352 body_v=(-0.035,-2.683,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=603 time=0.9648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0419 body_v=(-0.042,-2.736,0.008) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=653 time=1.0448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-2.640,-0.015) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=703 time=1.1248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0020 body_v=(-0.002,-3.079,-0.034) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 76958.79 ms
+[action step] step=753 time=1.2048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0015 body_v=(0.001,-3.593,0.046) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=803 time=1.2848000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0120 body_v=(0.012,-3.576,0.022) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=853 time=1.3648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0064 body_v=(0.006,-3.542,-0.068) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=903 time=1.4448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0329 body_v=(-0.033,-4.030,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=953 time=1.5248000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0513 body_v=(-0.051,-4.487,0.051) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1003 time=1.6048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0181 body_v=(-0.018,-4.422,-0.037) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1053 time=1.6848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0153 body_v=(0.015,-4.442,-0.019) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1103 time=1.7648000000000001 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0128 body_v=(0.013,-4.990,0.020) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1153 time=1.8448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0035 body_v=(-0.004,-5.380,0.009) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1203 time=1.9248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0129 body_v=(-0.013,-5.256,0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1253 time=2.0048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0250 body_v=(-0.025,-5.363,-0.036) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1303 time=2.0848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0399 body_v=(-0.040,-5.946,-0.006) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1353 time=2.1648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0244 body_v=(-0.024,-6.242,0.059) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1403 time=2.2448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0189 body_v=(0.019,-6.110,-0.030) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[          nan           nan -5.936942e+21]
+[action step] step=1453 time=2.3248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0268 body_v=(0.027,-6.302,-0.048) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[      nan       nan -5273064.]
+Backward Propagation took 70815.01 ms
+[action step] step=1503 time=2.4048000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0110 body_v=(-0.011,-6.886,0.056) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1553 time=2.4848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0340 body_v=(-0.034,-7.108,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1603 time=2.5648 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0277 body_v=(-0.028,-6.965,-0.047) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1653 time=2.6448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0217 body_v=(-0.022,-7.235,0.005) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1703 time=2.7248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0134 body_v=(-0.013,-7.829,0.014) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1753 time=2.8048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0094 body_v=(0.009,-7.960,0.012) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1803 time=2.8848000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0228 body_v=(0.023,-7.830,-0.007) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1853 time=2.9648000000000003 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0041 body_v=(-0.004,-8.195,-0.039) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1903 time=3.0448 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0450 body_v=(-0.045,-8.749,0.035) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=1953 time=3.1248 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0416 body_v=(-0.042,-8.795,0.033) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2003 time=3.2048 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=-0.0059 body_v=(-0.006,-8.717,-0.066) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2053 time=3.2848 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0069 body_v=(0.007,-9.148,0.001) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]
+[action step] step=2103 time=3.3648000000000002 rod_quat=[0. 0. 0. 1.] action=[nan nan nan] fwd_vel=0.0033 body_v=(0.003,-9.658,0.060) bladder_v=4.000e-02 buoy_f=392.4000 joint_angle=0.0000 target_angle=nan torque=nan grad=[ nan  nan -inf]

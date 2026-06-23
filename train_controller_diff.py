@@ -2,6 +2,8 @@
 import argparse
 import datetime
 import os
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -18,7 +20,7 @@ from SimDFSPH_diff import SimDFSPH_diff
 from SimDFSPH_diff_no_fluid_tape import SimDFSPH_diff as SimDFSPH_diff_no_fluid_tape
 from rigid_fluid_coupling import MaterialType
 from robots.controller import Controller
-from robots.controller_with_fluid import ControllerWithFluid
+from robots.controller_with_fluid import ControllerWithFluid, ControllerWithFluidGRU
 from fluid_encoder.ae_CNN_3d_pytorch import AutoEncoder3D
 from fluid_encoder.encoder_utils import get_local_fluid_grid_around_rigid, normalize_fluid_field
 from utils import export_backward_data, build_export_settings, build_default_log_dir, build_checkpoint_dir, build_controller_run_tag, save_fluid_velocity_field
@@ -239,17 +241,22 @@ def _get_sim_state(sim, step, include_time):
             omega[0], omega[1], omega[2],
         ])
 
+    # 鱼鳔体积
+    if _is_bladder_enabled(sim) and hasattr(sim, 'swim_bladder_volume_arrays') and len(sim.swim_bladder_volume_arrays) > step:
+        bladder_v = sim.swim_bladder_volume_arrays[step].numpy()
+        state_parts.append(float(bladder_v[0]))
+
     if include_time:
         t = float(step) * float(sim.frame_dt)
         # Use sin/cos encoding for time synchronized with wave boundary frequency
-        # waveBoundaryFrequency = 1.0 Hz -> period = 1.0 second
-        omega = 2.0 * np.pi / 1.0  # Period = 1.0s (matches wave boundary frequency)
+        wave_freq = float(getattr(sim, 'wave_boundary_frequency', 1.0) or 1.0)
+        omega = 2.0 * np.pi * wave_freq
         state_parts.append(float(np.sin(omega * t)))
         state_parts.append(float(np.cos(omega * t)))
     else:
         state_parts.append(0.0)
         state_parts.append(0.0)
-    
+
     return np.asarray(state_parts, dtype=np.float32)
 
 
@@ -341,13 +348,105 @@ class FluidAEPolicyAdapter(torch.nn.Module):
         ae_feat = _encode_local_fluid_grid(self.ae_model, vel_grid, self._controller_device())
         return self.base_controller(s, ae_feat, step=step)
 
+    def reset_hidden(self):
+        """重置 GRU 隐藏状态（委托给 base_controller）"""
+        if hasattr(self.base_controller, 'reset_hidden'):
+            self.base_controller.reset_hidden()
 
-def _resolve_action_bounds(sim, action_dim=1):
+
+def _inv_sigmoid(y, eps=1e-6):
+    """sigmoid 反函数: logit(y) = ln(y / (1-y)) — 保留用于兼容旧代码"""
+    y = max(eps, min(1.0 - eps, float(y)))
+    return math.log(y / (1.0 - y))
+
+
+class DirectParamsController(torch.nn.Module):
+    """直接优化正弦波参数（无神经网络）。
+
+    持有可训练标量: 频率(Hz)、最大摆动角度(rad)、鱼鳔体积变化率。
+    forward() 直接返回参数原始值作为 action，不做任何变换。
+    PD 控制器根据这些参数计算目标关节角度轨迹并施加力矩。
+    """
+
+    def __init__(self, freq_init=2.0, amp_init=1.0, bladder_delta_init=None):
+        super().__init__()
+        self.freq = torch.nn.Parameter(torch.tensor(float(freq_init)))
+        self.amp = torch.nn.Parameter(torch.tensor(float(amp_init)))
+        self.has_bladder = bladder_delta_init is not None
+        if self.has_bladder:
+            self.bladder = torch.nn.Parameter(torch.tensor(float(bladder_delta_init)))
+
+    def forward(self, state, step=None):
+        if self.has_bladder:
+            return torch.stack([self.freq, self.amp, self.bladder])
+        return torch.stack([self.freq, self.amp])
+
+    def get_values(self):
+        """返回当前参数值（Python float 列表）。"""
+        with torch.no_grad():
+            result = [float(self.freq.item()), float(self.amp.item())]
+            if self.has_bladder:
+                result.append(float(self.bladder.item()))
+            return result
+
+    def get_raw_params(self):
+        """返回参数值 dict（等价于 get_values，保留用于兼容旧日志代码）。"""
+        vals = self.get_values()
+        params = {"freq": vals[0], "amp": vals[1]}
+        if self.has_bladder:
+            params["bladder"] = vals[2]
+        return params
+
+
+def _is_bladder_enabled(sim):
+    """鱼鳔浮力默认启用"""
+    return True
+
+
+def _resolve_action_bounds(sim, action_dim=1, sine_action=False, omega_action=False):
     global is_fish_task
     if is_fish_task:
-        print("[task] Resolving action bounds for FishTask (only Y-axis angular velocity)")
-        action_min = [-1.0] * int(action_dim)
-        action_max = [1.0] * int(action_dim)
+        bladder = _is_bladder_enabled(sim)
+        tag = "with bladder" if bladder else ""
+        if sine_action:
+            mode_tag = "sine"
+        elif omega_action:
+            mode_tag = "omega"
+        else:
+            mode_tag = "direct"
+        print(f"[task] Resolving action bounds for FishTask {tag} ({mode_tag}, action_dim={action_dim})")
+        if sine_action:
+            # PD 控制器模式: [频率, 最大摆动角度] + 可选鱼鳔
+            # 范围从 JSON 配置读取，不存在时使用默认值
+            freq_min = float(getattr(sim, 'sine_freq_min', 0.1))
+            freq_max = float(getattr(sim, 'sine_freq_max', 8.0))
+            amp_min = float(getattr(sim, 'sine_amp_min', 0.05))
+            amp_max = float(getattr(sim, 'sine_amp_max', 1.5))
+            action_min = [freq_min, amp_min] + ([-float(sim.swim_bladder_action_max)] if bladder else [])
+            action_max = [freq_max, amp_max] + ([float(sim.swim_bladder_action_max)] if bladder else [])
+            print(f"[task]   sine bounds: freq=[{freq_min}, {freq_max}] Hz, amp=[{amp_min}, {amp_max}] rad")
+        elif omega_action:
+            # 直接关节角速度模式: action[0] = 目标关节相对角速度 (rad/s)
+            # 范围从 JSON 配置读取，不存在时使用默认值
+            omega_min = float(getattr(sim, 'omega_action_min', -20.0))
+            omega_max = float(getattr(sim, 'omega_action_max', 20.0))
+            action_min = [omega_min] * int(action_dim)
+            action_max = [omega_max] * int(action_dim)
+            print(f"[task]   omega_action bounds: [{omega_min}, {omega_max}] rad/s")
+        else:
+            # 直接力矩模式：角速度上下界从 JSON 配置读取
+            t_min = float(getattr(sim, 'action_torque_min', -1.0))
+            t_max = float(getattr(sim, 'action_torque_max', 1.0))
+            action_min = [t_min] * int(action_dim)
+            action_max = [t_max] * int(action_dim)
+            print(f"[task]   torque bounds: [{t_min}, {t_max}] rad/s")
+        if bladder:
+            # 鱼鳔体积变化率范围 (m³/s)，从 JSON 配置读取
+            v_min = float(sim.swim_bladder_action_min)
+            v_max = float(sim.swim_bladder_action_max)
+            action_min[-1] = v_min
+            action_max[-1] = v_max
+            print(f"[task]   bladder delta-v bounds: [{v_min:.1e}, {v_max:.1e}] m^3/s")
     else:
         action_min = [-0.5] * int(action_dim)
         action_max = [0.5] * int(action_dim)
@@ -356,22 +455,26 @@ def _resolve_action_bounds(sim, action_dim=1):
 
 
 def _build_policy_controller(sim, args):
+    use_bladder = is_fish_task and _is_bladder_enabled(sim)
+    sine_action = is_fish_task and getattr(args, "sine_action", False)
+    omega_action = is_fish_task and getattr(args, "omega_action", False)
     if not args.use_fluid:
-        action_min, action_max = _resolve_action_bounds(sim, action_dim=1)
+        # 基础: sine=2 (频率+幅度), omega=1 (关节角速度), use_x_torque=2, 默认=1
+        if sine_action:
+            base_dim = 2
+        else:
+            base_dim = 2 if (is_fish_task and getattr(args, "use_x_torque", False)) else 1
+        action_dim = base_dim + (1 if use_bladder else 0)
+        action_min, action_max = _resolve_action_bounds(sim, action_dim=action_dim, sine_action=sine_action, omega_action=omega_action)
         return Controller(action_min=action_min, action_max=action_max)
 
     if not args.encoder_path:
         raise ValueError("use_fluid requires --encoder_path")
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # Load checkpoint first and infer latent channel count from its encoder conv weights.
     ae_state = torch.load(args.encoder_path, map_location=device)
     ae_model = AutoEncoder3D(in_channels=3,).to(device)
-    try:
-        ae_model.load_state_dict(ae_state)
-    except Exception:
-        # fall back to non-strict load to allow minor key mismatches
-        ae_model.load_state_dict(ae_state, strict=False)
+    ae_model.load_state_dict(ae_state)
     ae_model.eval()
     for p in ae_model.parameters():
         p.requires_grad_(False)
@@ -392,14 +495,19 @@ def _build_policy_controller(sim, args):
     state_dim = int(_get_sim_state(sim, step=0, include_time=include_time_for_state).shape[0])
     if getattr(args, "use_relative_state", False):
         state_dim -= 2
-    action_dim = 1
+    if sine_action:
+        base_dim = 2
+    else:
+        base_dim = 2 if (is_fish_task and getattr(args, "use_x_torque", False)) else 1
+    action_dim = base_dim + (1 if use_bladder else 0)
 
-    base_controller = ControllerWithFluid(
+    controller_cls = ControllerWithFluidGRU if args.add_gru else ControllerWithFluid
+    base_controller = controller_cls(
         state_dim=state_dim,
         ae_feat_dim=int(sample_feat.numel()),
         action_dim=action_dim,
-        action_min=_resolve_action_bounds(sim, action_dim=action_dim)[0],
-        action_max=_resolve_action_bounds(sim, action_dim=action_dim)[1],
+        action_min=_resolve_action_bounds(sim, action_dim=action_dim, sine_action=sine_action, omega_action=omega_action)[0],
+        action_max=_resolve_action_bounds(sim, action_dim=action_dim, sine_action=sine_action, omega_action=omega_action)[1],
     ).to(device)
     wrapped = FluidAEPolicyAdapter(
         sim=sim,
@@ -424,7 +532,7 @@ def _make_env_for_sim(sim, args, sim_steps):
             is_fish_task = True
             print(f"[task] Detected task '{name}', using DifferentiableFishEnv with angular velocity control and symmetric action bounds.")
     EnvCls = DifferentiableFishEnv if is_fish_task else DifferentiableCartPoleEnv
-    env = EnvCls(
+    env_kwargs = dict(
         sim=sim,
         control_interval=args.control_interval,
         backward_interval=args.backward_interval,
@@ -434,8 +542,29 @@ def _make_env_for_sim(sim, args, sim_steps):
         total_sim_steps=sim_steps,
         random_start=getattr(args, "random_start", False),
         use_relative_state=getattr(args, "use_relative_state", False),
+        sine_action=getattr(args, "sine_action", False),
     )
+    if is_fish_task:
+        env_kwargs["omega_action"] = getattr(args, "omega_action", False)
+    env = EnvCls(**env_kwargs)
     return env
+
+
+def _write_training_command(log_dir, args):
+    if not log_dir:
+        return
+
+    os.makedirs(log_dir, exist_ok=True)
+    command = subprocess.list2cmdline([sys.executable] + sys.argv)
+    command_path = os.path.join(log_dir, "training_command.txt")
+    with open(command_path, "w", encoding="utf-8") as f:
+        f.write(command)
+        f.write("\n\n")
+        f.write("Parsed args:\n")
+        for key, value in sorted(vars(args).items()):
+            f.write(f"{key}: {value}\n")
+    print(f"Training command saved to {command_path}")
+
 
 
 def _log_first_segment_step_grads(writer, sim, env):
@@ -504,8 +633,8 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
 
     controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
-    # optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
-    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    trainable_params = [p for p in controller.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr)
     scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     writer = None
@@ -542,6 +671,8 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             and (epoch == args.iters - 1)
         )
         env.reset_episode()
+        if hasattr(controller, 'reset_hidden'):
+            controller.reset_hidden()
 
         global_step = 0
         processed_steps = 0
@@ -560,6 +691,8 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
         while len(batch_buffer) < batch_size:
             if global_step >= total_sim_steps:
                 env.reset_episode()
+                if hasattr(controller, 'reset_hidden'):
+                    controller.reset_hidden()
                 global_step = 0
 
             backward_steps = min(diff_horizon, total_sim_steps - global_step)
@@ -590,6 +723,8 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
                 )
                 # end current episode early and start next one
                 env.reset_episode()
+                if hasattr(controller, 'reset_hidden'):
+                    controller.reset_hidden()
                 global_step = 0
                 continue
 
@@ -661,7 +796,7 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             best_loss = loss_val
             loss_tag = "loss_unknown" if loss_val is None or not np.isfinite(loss_val) else f"loss_{loss_val:.6e}"
             best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
-            torch.save(controller.state_dict(), best_ckpt_path)
+            _save_controller_checkpoint(controller, best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
 
     if export_settings is not None and output_ply and series_prefix:
@@ -680,6 +815,8 @@ def train_controller(sim, args, sim_steps, export_settings=None, ckpt_dir=None):
             series_prefix,
             include_last_step=True,
         )
+
+    print(f"[BEST_MODEL] {best_ckpt_path}")
 
     if writer is not None:
         writer.close()
@@ -701,7 +838,8 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
 
     controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    trainable_params = [p for p in controller.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr)
     scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     writer = None
@@ -715,6 +853,7 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
     os.makedirs(ckpt_dir, exist_ok=True)
 
     best_loss = float("inf")
+    best_ckpt_path = None
 
     for epoch in range(args.iters):
         controller.train()
@@ -748,14 +887,46 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
         action_grad_norm = rollout_stats["action_grad_norm"]
         control_count = rollout_stats["controls"]
         segment_count = rollout_stats["segments"]
+        physics_info = rollout_stats.get("physics_info", {})
+
+        # Build physics info string for printing
+        physics_str = ""
+        if physics_info:
+            parts = []
+            if "body_angle_err" in physics_info:
+                parts.append(f"body_angle_err={physics_info['body_angle_err']:.4f}")
+            if "tail_angle_err" in physics_info:
+                parts.append(f"tail_angle_err={physics_info['tail_angle_err']:.4f}")
+            if "pos_err" in physics_info:
+                parts.append(f"pos_err={physics_info['pos_err']:.4f}")
+            if "forward_vel" in physics_info:
+                parts.append(f"forward_vel={physics_info['forward_vel']:.4f}")
+            if "tail_periodic_angle_err" in physics_info:
+                parts.append(f"tail_periodic_angle_err={physics_info['tail_periodic_angle_err']:.4f}")
+            # 各项 loss 组件的数值
+            if "loss_pose" in physics_info:
+                parts.append(f"L_pose={physics_info['loss_pose']:.4e}")
+            if "loss_position" in physics_info:
+                parts.append(f"L_pos={physics_info['loss_position']:.4e}")
+            if "loss_velocity" in physics_info:
+                parts.append(f"L_vel={physics_info['loss_velocity']:.4e}")
+            if "loss_tail_periodic" in physics_info:
+                parts.append(f"L_tail={physics_info['loss_tail_periodic']:.4e}")
+            if parts:
+                physics_str = " | " + " ".join(parts)
 
         print(
-            f"Epoch {epoch:04d} | avg_loss={loss_val:.6e} | controls={control_count} | "
-            f"segments={segment_count} | avg_action_grad_norm={action_grad_norm:.6e}"
+            f"Epoch {epoch:04d} | loss={loss_val:.6e} | controls={control_count} | "
+            f"segments={segment_count} | action_grad_norm={action_grad_norm:.6e}"
+            f"{physics_str}"
         )
 
         if writer is not None:
             writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("Loss/pose", physics_info.get("loss_pose", 0.0), epoch)
+            writer.add_scalar("Loss/position", physics_info.get("loss_position", 0.0), epoch)
+            writer.add_scalar("Loss/velocity", physics_info.get("loss_velocity", 0.0), epoch)
+            writer.add_scalar("Loss/tail_periodic", physics_info.get("loss_tail_periodic", 0.0), epoch)
             writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
             writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
             writer.add_scalar("Control/count", float(control_count), epoch)
@@ -767,7 +938,7 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
             best_loss = loss_val
             loss_tag = "loss_unknown" if loss_val is None or not np.isfinite(loss_val) else f"loss_{loss_val:.6e}"
             best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
-            torch.save(controller.state_dict(), best_ckpt_path)
+            _save_controller_checkpoint(controller, best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
 
     if export_settings is not None and output_ply and series_prefix:
@@ -786,6 +957,144 @@ def train_controller_online(sim, args, sim_steps, export_settings=None, ckpt_dir
             series_prefix,
             include_last_step=True,
         )
+
+    print(f"[BEST_MODEL] {best_ckpt_path}")
+
+    if writer is not None:
+        writer.close()
+
+
+def train_direct_params(sim, args, sim_steps, ckpt_dir=None):
+    """直接参数优化模式：固定频率+摆动角度+鱼鳔，无神经网络控制器。
+
+    使用 PD 控制器模式（sine_action），直接优化频率、最大摆动角度(rad)、鱼鳔体积变化率
+    三个标量参数。Gradient 通过可微仿真反传，直接更新参数值。
+    """
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    # 强制使用 sine_action 模式
+    args.sine_action = True
+
+    env = _make_env_for_sim(sim, args, sim_steps)
+
+    use_bladder = is_fish_task and _is_bladder_enabled(sim)
+    freq_init = float(getattr(sim, "optimize_freq_init", 2.0))
+    amp_init = float(getattr(sim, "optimize_amp_init", 1.0))
+    bladder_init = float(getattr(sim, "optimize_bladder_delta_init", 0.0)) if use_bladder else None
+
+    print(f"[direct_params] Initial values: freq={freq_init:.3f} Hz, angle_amp={amp_init:.3f} rad"
+          + (f", bladder_delta={bladder_init:.3e}" if use_bladder else ""))
+
+    controller = DirectParamsController(
+        freq_init=freq_init,
+        amp_init=amp_init,
+        bladder_delta_init=bladder_init,
+    )
+
+    # 不使用 scheduler — 直接参数优化维度低，收敛快
+    optimizer = torch.optim.Adam(controller.parameters(), lr=args.lr)
+
+    writer = None
+    if args.log_dir:
+        os.makedirs(args.log_dir, exist_ok=True)
+        writer = tensorboardX.SummaryWriter(log_dir=args.log_dir)
+
+    if ckpt_dir is None:
+        ckpt_dir = os.path.join(build_checkpoint_dir(args), build_controller_run_tag(args))
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    best_loss = float("inf")
+    best_ckpt_path = None
+
+    for epoch in range(args.iters):
+        controller.train()
+        env.reset_episode()
+
+        # 记录更新前的参数值
+        values_before = controller.get_values()
+
+        rollout_stats = env.rollout(
+            controller=controller,
+            optimizer=optimizer,
+            grad_clip_norm=args.grad_clip_norm,
+            loss_threshold=args.loss_threshold,
+        )
+
+        # 记录更新后的参数值
+        values_after = controller.get_values()
+        raw_params = controller.get_raw_params()
+
+        loss_val = rollout_stats["loss"]
+        action_grad_norm = rollout_stats["action_grad_norm"]
+        control_count = rollout_stats["controls"]
+        segment_count = rollout_stats["segments"]
+        physics_info = rollout_stats.get("physics_info", {})
+
+        # 计算参数变化
+        delta_freq = values_after[0] - values_before[0]
+        delta_amp = values_after[1] - values_before[1]
+
+        # Build physics info string for printing
+        physics_str = ""
+        if physics_info:
+            parts = []
+            if "body_angle_err" in physics_info:
+                parts.append(f"body_angle_err={physics_info['body_angle_err']:.4f}")
+            if "tail_angle_err" in physics_info:
+                parts.append(f"tail_angle_err={physics_info['tail_angle_err']:.4f}")
+            if "pos_err" in physics_info:
+                parts.append(f"pos_err={physics_info['pos_err']:.4f}")
+            if "forward_vel" in physics_info:
+                parts.append(f"forward_vel={physics_info['forward_vel']:.4f}")
+            if "tail_periodic_angle_err" in physics_info:
+                parts.append(f"tail_periodic_angle_err={physics_info['tail_periodic_angle_err']:.4f}")
+            # 各项 loss 组件的数值
+            if "loss_pose" in physics_info:
+                parts.append(f"L_pose={physics_info['loss_pose']:.4e}")
+            if "loss_position" in physics_info:
+                parts.append(f"L_pos={physics_info['loss_position']:.4e}")
+            if "loss_velocity" in physics_info:
+                parts.append(f"L_vel={physics_info['loss_velocity']:.4e}")
+            if "loss_tail_periodic" in physics_info:
+                parts.append(f"L_tail={physics_info['loss_tail_periodic']:.4e}")
+            if parts:
+                physics_str = " | " + " ".join(parts)
+
+        print(
+            f"Epoch {epoch:04d} | loss={loss_val:.6e} | "
+            f"freq={values_after[0]:.4f} Hz (Δ={delta_freq:+.2e}) | "
+            f"angle={values_after[1]:.4f} rad (Δ={delta_amp:+.2e})"
+            + (f" | bladder={values_after[2]:.3e}" if use_bladder else "")
+            + f" | controls={control_count} | segments={segment_count}"
+            + physics_str
+        )
+
+        if writer is not None:
+            writer.add_scalar("Loss/train", loss_val, epoch)
+            writer.add_scalar("Param/freq", values_after[0], epoch)
+            writer.add_scalar("Param/amp", values_after[1], epoch)
+            writer.add_scalar("Param/freq_raw", raw_params["freq"], epoch)
+            writer.add_scalar("Param/amp_raw", raw_params["amp"], epoch)
+            writer.add_scalar("Delta/freq", delta_freq, epoch)
+            writer.add_scalar("Delta/amp", delta_amp, epoch)
+            writer.add_scalar("LR/current", _get_current_lr(optimizer), epoch)
+            writer.add_scalar("Grad/action_norm", action_grad_norm, epoch)
+            writer.add_scalar("Control/count", float(control_count), epoch)
+            if use_bladder:
+                delta_bladder = values_after[2] - values_before[2]
+                writer.add_scalar("Param/bladder_delta", values_after[2], epoch)
+                writer.add_scalar("Param/bladder_raw", raw_params["bladder"], epoch)
+                writer.add_scalar("Delta/bladder_delta", delta_bladder, epoch)
+
+        if loss_val < best_loss:
+            best_loss = loss_val
+            loss_tag = "loss_unknown" if loss_val is None or not np.isfinite(loss_val) else f"loss_{loss_val:.6e}"
+            best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
+            _save_controller_checkpoint(controller, best_ckpt_path)
+            print(f"Saved best model to: {best_ckpt_path}")
+
+    print(f"[BEST_MODEL] {best_ckpt_path}")
 
     if writer is not None:
         writer.close()
@@ -894,10 +1203,19 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     if args.use_fluid:
         raise ValueError("use_fluid is not supported in sim_backward_controller mode. Use --train_ar instead.")
 
-    action_min, action_max = _resolve_action_bounds(sim, action_dim=1)
+    use_bladder = is_fish_task and _is_bladder_enabled(sim)
+    sine_action = is_fish_task and getattr(args, "sine_action", False)
+    omega_action = is_fish_task and getattr(args, "omega_action", False)
+    if sine_action:
+        base_dim = 2
+    else:
+        base_dim = 2 if (is_fish_task and getattr(args, "use_x_torque", False)) else 1
+    action_dim = base_dim + (1 if use_bladder else 0)
+    action_min, action_max = _resolve_action_bounds(sim, action_dim=action_dim, sine_action=sine_action, omega_action=omega_action)
     controller = Controller(action_min=action_min, action_max=action_max)
     load_controller_checkpoint(controller, args.model_path)
-    optimizer = torch.optim.AdamW(controller.parameters(), lr=args.lr)
+    trainable_params = [p for p in controller.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr)
     scheduler = build_lr_scheduler(optimizer, args) if getattr(args, "lr_scheduler", False) else None
 
     if not hasattr(sim, "task") or not hasattr(sim.task, "opt_rigid_v"):
@@ -913,6 +1231,7 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
     os.makedirs(ckpt_dir, exist_ok=True)
 
     best_loss = float("inf")
+    best_ckpt_path = None
 
     for epoch in range(args.iters):
         controller.train()
@@ -978,7 +1297,7 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
             best_loss = loss_val
             loss_tag = "loss_unknown" if loss_val is None or not np.isfinite(loss_val) else f"loss_{loss_val:.6e}"
             best_ckpt_path = os.path.join(ckpt_dir, f"model_best_{loss_tag}.pth")
-            torch.save(controller.state_dict(), best_ckpt_path)
+            _save_controller_checkpoint(controller, best_ckpt_path)
             print(f"Saved best model to: {best_ckpt_path}")
 
     if export_settings is not None:
@@ -1000,8 +1319,27 @@ def train_controller_with_sim_backward(sim, args, sim_steps, export_settings=Non
                 include_last_step=True,
             )
 
+    print(f"[BEST_MODEL] {best_ckpt_path}")
+
     if writer is not None:
         writer.close()
+
+def _get_trainable_controller(controller):
+    """Return the inner trainable module for save/load.
+
+    When the controller is wrapped in FluidAEPolicyAdapter we only want to
+    persist the base_controller weights — not the frozen AE encoder weights.
+    """
+    if isinstance(controller, FluidAEPolicyAdapter):
+        return controller.base_controller
+    return controller
+
+
+def _save_controller_checkpoint(controller, path):
+    """Save only trainable controller weights (excludes frozen AE encoder)."""
+    trainable = _get_trainable_controller(controller)
+    torch.save(trainable.state_dict(), path)
+
 
 def load_controller_checkpoint(controller, ckpt_path):
     if not ckpt_path:
@@ -1011,16 +1349,107 @@ def load_controller_checkpoint(controller, ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     state_dict = torch.load(ckpt_path, map_location="cpu")
-    controller.load_state_dict(state_dict)
-    print(f"Loaded controller checkpoint from: {ckpt_path}")
+    trainable = _get_trainable_controller(controller)
+
+    # --- backward compatibility: old checkpoints saved full FluidAEPolicyAdapter ---
+    # Old format keys: "base_controller.xxx", "ae_model.xxx"
+    # New format keys: "xxx" (flat, base_controller only)
+    if isinstance(controller, FluidAEPolicyAdapter):
+        sample_keys = list(state_dict.keys())
+        if sample_keys and sample_keys[0].startswith("base_controller."):
+            print("[load_ckpt] Detected old-format checkpoint (full FluidAEPolicyAdapter). "
+                  "Stripping 'base_controller.' prefix...")
+            stripped = {}
+            prefix = "base_controller."
+            for k, v in state_dict.items():
+                if k.startswith(prefix):
+                    stripped[k[len(prefix):]] = v
+                elif not k.startswith("ae_model."):
+                    # preserve unexpected keys for diagnostic
+                    stripped[k] = v
+            state_dict = stripped
+
+    # --- diagnostic: compare keys ---
+    model_keys = set(trainable.state_dict().keys())
+    ckpt_keys = set(state_dict.keys())
+    missing = model_keys - ckpt_keys
+    unexpected = ckpt_keys - model_keys
+    if missing:
+        print(f"[load_ckpt] WARNING — missing keys ({len(missing)}): {sorted(missing)[:10]}...")
+    if unexpected:
+        print(f"[load_ckpt] WARNING — unexpected keys ({len(unexpected)}): {sorted(unexpected)[:10]}...")
+
+    # --- adapt action_dim mismatch between checkpoint and current model ---
+    model_state = trainable.state_dict()
+    adapted = {}
+    for key, ckpt_val in state_dict.items():
+        model_val = model_state.get(key)
+        if model_val is not None and ckpt_val.shape != model_val.shape:
+            print(f"[load_ckpt] Shape mismatch for '{key}': "
+                  f"ckpt {list(ckpt_val.shape)} -> model {list(model_val.shape)}")
+            if ckpt_val.dim() == 1:
+                # 1D: action_min, action_max, bias
+                old_dim = ckpt_val.shape[0]
+                new_dim = model_val.shape[0]
+                if new_dim > old_dim:
+                    # pad new dims with small random values for symmetry breaking
+                    pad = torch.randn(new_dim - old_dim, dtype=ckpt_val.dtype) * 0.01
+                    adapted[key] = torch.cat([ckpt_val, pad], dim=0)
+                else:
+                    adapted[key] = ckpt_val[:new_dim]
+            elif ckpt_val.dim() == 2:
+                # 2D: output layer weight [out_dim, in_dim]
+                old_out_dim = ckpt_val.shape[0]
+                new_out_dim = model_val.shape[0]
+                if new_out_dim > old_out_dim:
+                    pad = torch.randn(new_out_dim - old_out_dim, ckpt_val.shape[1],
+                                      dtype=ckpt_val.dtype) * 0.01
+                    adapted[key] = torch.cat([ckpt_val, pad], dim=0)
+                else:
+                    adapted[key] = ckpt_val[:new_out_dim]
+            else:
+                raise RuntimeError(
+                    f"Unsupported shape mismatch for '{key}': {list(ckpt_val.shape)} -> {list(model_val.shape)}")
+        else:
+            adapted[key] = ckpt_val
+    state_dict = adapted
+
+    # --- diagnostic: weight statistics before loading ---
+    weight_stats_before = {}
+    for name, param in trainable.named_parameters():
+        w = param.data.cpu().numpy()
+        weight_stats_before[name] = (float(np.mean(w)), float(np.std(w)))
+
+    trainable.load_state_dict(state_dict)
+
+    # --- diagnostic: weight statistics after loading ---
+    weights_changed = 0
+    weights_unchanged = 0
+    for name, param in trainable.named_parameters():
+        w = param.data.cpu().numpy()
+        mean_before, std_before = weight_stats_before.get(name, (float('nan'), float('nan')))
+        mean_after = float(np.mean(w))
+        if abs(mean_after - mean_before) > 1e-8:
+            weights_changed += 1
+        else:
+            weights_unchanged += 1
+
+    print(
+        f"[load_ckpt] Loaded controller checkpoint from: {ckpt_path}  "
+        f"(params_changed={weights_changed}, params_unchanged={weights_unchanged})"
+    )
+    if weights_changed == 0 and len(weight_stats_before) > 0:
+        print("[load_ckpt] *** WARNING *** no parameter changed after load_state_dict — "
+              "checkpoint may have identical weights or loading silently failed!")
     return True
 
 
 def test_controller(sim, args, sim_steps, export_settings=None):
+    # 先创建 env，确保 is_fish_task 等全局标志被正确设置
+    env = _make_env_for_sim(sim, args, sim_steps)
+
     controller = _build_policy_controller(sim, args)
     load_controller_checkpoint(controller, args.model_path)
-
-    env = _make_env_for_sim(sim, args, sim_steps)
 
     if args.save_fluid_field:
         os.makedirs(args.fluid_field_out_dir, exist_ok=True)
@@ -1044,6 +1473,52 @@ def test_controller(sim, args, sim_steps, export_settings=None):
     print(f"Test complete | loss={loss_val:.6e} | controls={control_count}")
 
 
+def test_direct_params(sim, args, sim_steps, export_settings=None):
+    """直接参数优化模式的测试：加载已优化的标量参数，仅前向模拟。"""
+    # 强制使用 sine_action
+    args.sine_action = True
+
+    # 先创建 env，确保 is_fish_task 等全局标志被正确设置
+    env = _make_env_for_sim(sim, args, sim_steps)
+
+    use_bladder = is_fish_task and _is_bladder_enabled(sim)
+    freq_init = float(getattr(sim, "optimize_freq_init", 2.0))
+    amp_init = float(getattr(sim, "optimize_amp_init", 1.0))
+    bladder_init = float(getattr(sim, "optimize_bladder_delta_init", 0.0)) if use_bladder else None
+
+    controller = DirectParamsController(
+        freq_init=freq_init,
+        amp_init=amp_init,
+        bladder_delta_init=bladder_init,
+    )
+    load_controller_checkpoint(controller, args.model_path)
+
+    print(f"[test_direct_params] Loaded params: freq={controller.get_values()[0]:.4f} Hz, "
+          f"angle={controller.get_values()[1]:.4f} rad"
+          + (f", bladder={controller.get_values()[2]:.3e}" if use_bladder else ""))
+
+    if args.save_fluid_field:
+        os.makedirs(args.fluid_field_out_dir, exist_ok=True)
+        env.export_fluid_field = True
+        env.export_fluid_field_dir = args.fluid_field_out_dir
+        env.export_fluid_field_launch_time = getattr(args, "command_start_time_tag", None)
+        env.export_fluid_field_grid_shape = tuple(getattr(args, "fluid_grid_shape", (32, 32, 32)))
+        env.export_fluid_field_grid_spacing = float(getattr(args, "fluid_grid_spacing", LOCAL_FLUID_GRID_CELL_SIZE))
+        env.export_fluid_field_influence_radius = args.fluid_influence_radius
+
+    if export_settings is not None:
+        output_ply, _, output_interval, series_prefix, _, _ = export_settings
+        if output_ply:
+            env.export_before_diff_reset = True
+            env.export_output_interval = int(output_interval)
+            env.export_series_prefix = series_prefix
+            env.export_ply_counter = 0
+
+    loss_val, control_count = env.rollout_forward_only(controller, total_sim_steps=sim_steps)
+
+    print(f"[test_direct_params] Test complete | loss={loss_val:.6e} | controls={control_count}")
+
+
 def build_simulator(args):
     config = SimConfig(scene_file_path=args.scene_file)
 
@@ -1054,6 +1529,19 @@ def build_simulator(args):
     print(f"Using sim_steps: {sim_steps}")
     segment_steps = args.backward_interval * args.control_interval + 1
     print(f"segment_steps: {segment_steps}")
+
+    # Resolve tail_periodic_freq/amp: CLI args take priority, fall back to JSON config, then defaults
+    tail_periodic_freq = args.tail_periodic_freq
+    if tail_periodic_freq is None:
+        tail_periodic_freq = config.get_cfg("tailPeriodicFreq")
+        if tail_periodic_freq is None:
+            tail_periodic_freq = 2.0
+    tail_periodic_amp = args.tail_periodic_amp
+    if tail_periodic_amp is None:
+        tail_periodic_amp = config.get_cfg("tailPeriodicAmp")
+        if tail_periodic_amp is None:
+            tail_periodic_amp = 0.5
+    print(f"tail_periodic_freq={tail_periodic_freq}, tail_periodic_amp={tail_periodic_amp}")
 
     with wp.ScopedDevice(args.device):
         if args.method == 1:
@@ -1072,6 +1560,14 @@ def build_simulator(args):
                 use_diffFR=args.difffr,
                 verbose=args.verbose,
                 use_v_loss=args.use_v_loss,
+                no_pose_loss=getattr(args, "no_pose_loss", False),
+                use_x_loss=getattr(args, "use_x_loss", False),
+                use_tail_periodic_loss=getattr(args, "use_tail_periodic_loss", False),
+                tail_periodic_freq=tail_periodic_freq,
+                tail_periodic_amp=tail_periodic_amp,
+                tail_periodic_weight=getattr(args, "tail_periodic_weight", 1.0),
+                control_interval=args.control_interval,
+                control_start_step=args.control_start_step,
             )
         else:
             sim = SimSPH_diff(
@@ -1087,6 +1583,14 @@ def build_simulator(args):
                 use_diffFR=args.difffr,
                 verbose=args.verbose,
                 use_v_loss=args.use_v_loss,
+                no_pose_loss=getattr(args, "no_pose_loss", False),
+                use_x_loss=getattr(args, "use_x_loss", False),
+                use_tail_periodic_loss=getattr(args, "use_tail_periodic_loss", False),
+                tail_periodic_freq=tail_periodic_freq,
+                tail_periodic_amp=tail_periodic_amp,
+                tail_periodic_weight=getattr(args, "tail_periodic_weight", 1.0),
+                control_interval=args.control_interval,
+                control_start_step=args.control_start_step,
             )
 
     return sim, config, sim_steps
@@ -1155,7 +1659,16 @@ def get_parser():
     parser.add_argument("--difffr", action="store_true", help="Enable diffFR mode.")
     parser.add_argument("--verbose", action="store_true", help="Verbose simulator logs.")
     parser.add_argument("--use_v_loss", action="store_true", help="Add fish body forward velocity loss term (FishTaskNew only).")
-
+    parser.add_argument("--use_x_loss", action="store_true", help="Add fish body position loss term — keep near initial position (FishTaskNew only).")
+    parser.add_argument("--no_pose_loss", action="store_true", help="Disable body+tail pose (quaternion) loss, keep only velocity loss (FishTaskNew only).")
+    parser.add_argument("--use_tail_periodic_loss", action="store_true", help="Add tail periodic oscillation loss Σ(q_t - A*sin(ωt))² to encourage periodic tail swing (FishTaskNew only).")
+    parser.add_argument("--tail_periodic_freq", type=float, default=None, help="Reference sine-wave frequency (Hz) for tail periodic loss. Reads from JSON config 'tailPeriodicFreq' if not set (default 2.0).")
+    parser.add_argument("--tail_periodic_amp", type=float, default=None, help="Reference sine-wave amplitude (rad) for tail periodic loss. Reads from JSON config 'tailPeriodicAmp' if not set (default 0.5).")
+    parser.add_argument("--tail_periodic_weight", type=float, default=1.0, help="Weight applied to tail periodic loss term.")
+    parser.add_argument("--sine_action", action="store_true", help="Sine-wave joint torque mode: controller outputs [frequency, amplitude] instead of raw torque.")
+    parser.add_argument("--omega_action", action="store_true", help="Direct joint angular velocity mode: controller outputs target joint relative angular velocity (rad/s) applied immediately.")
+    parser.add_argument("--optimize_params", action="store_true", help="Direct parameter optimization mode: optimize fixed freq/amp/bladder scalars (no NN controller).")
+    parser.add_argument("--add_gru", action="store_true", help="Add GRU memory unit to ControllerWithFluid.")
     # Rendering options
     parser.add_argument("--viewer", type=str, default="gl", choices=["gl", "none"], help="Viewer type for real-time rendering.")
     parser.add_argument("--headless", action="store_true", help="Run in headless mode (no GUI).")
@@ -1164,9 +1677,12 @@ def get_parser():
 
 
 def main():
-    args = get_parser().parse_args()
+    _parser = get_parser()
+    args = _parser.parse_args()
     args.command_start_time_tag = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
+    if args.sine_action and args.omega_action:
+        _parser.error("--sine_action and --omega_action are mutually exclusive. Choose one action mode.")
     if args.train_ar:
         args.use_fluid = True
     if args.test_ar:
@@ -1180,6 +1696,10 @@ def main():
     #     viewer, args = newton.examples.init(args)
     #     viewer_session = ControllerTrainingViewer(viewer, args)
     #     print("[viewer] Created Newton GL viewer")
+
+    # Set numpy seed BEFORE building the simulator so that rigid-body
+    # particle sampling from mesh surfaces (trimesh) is deterministic.
+    np.random.seed(args.seed)
 
     sim_time = args.t
     sim, config, sim_steps = build_simulator(args)
@@ -1219,9 +1739,15 @@ def main():
     print(f"TensorBoard logging to {args.log_dir}")
     print(f"Checkpoint directory: {ckpt_dir}")
     print(f"Using backwardInterval (signal spans): {args.backward_interval}")
+    _write_training_command(args.log_dir, args)
 
     if args.test:
-        test_controller(sim, args, sim_steps, export_settings=export_settings)
+        if getattr(args, "optimize_params", False):
+            test_direct_params(sim, args, sim_steps, export_settings=export_settings)
+        else:
+            test_controller(sim, args, sim_steps, export_settings=export_settings)
+    elif getattr(args, "optimize_params", False):
+        train_direct_params(sim, args, sim_steps, ckpt_dir=ckpt_dir)
     elif args.use_sim_backward:
         train_controller_with_sim_backward(sim, args, sim_steps, export_settings=export_settings, ckpt_dir=ckpt_dir)
     elif args.batch is not None:

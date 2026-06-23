@@ -7,8 +7,8 @@ from rigid_fluid_coupling import compute_moving_boundary_volume, solve_rigid_bod
 
 
 class SimDFSPH_diff(SimSPH_diff):
-    def __init__(self, config=None, container=None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False, use_v_loss=False):
-        super().__init__(config, container, stage_path, sim_steps, ply_path, lr, h_scale, use_custom_grad, use_norm_grad, use_diffFR, verbose, use_v_loss)
+    def __init__(self, config=None, container=None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False, use_v_loss=False, no_pose_loss=False, use_x_loss=False, use_tail_periodic_loss=False, tail_periodic_freq=2.0, tail_periodic_amp=0.5, tail_periodic_weight=1.0, control_interval=1260, control_start_step=0):
+        super().__init__(config, container, stage_path, sim_steps, ply_path, lr, h_scale, use_custom_grad, use_norm_grad, use_diffFR, verbose, use_v_loss, no_pose_loss, use_x_loss, use_tail_periodic_loss, tail_periodic_freq, tail_periodic_amp, tail_periodic_weight, control_interval, control_start_step)
         self.m_max_iterations = 5  # Reduced iterations for differentiability
         self.max_error = 0.05
         self.max_error_V = 0.1

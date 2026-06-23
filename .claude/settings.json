@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(D:\\\\\\\\SoftWare\\\\\\\\miniconda3\\\\\\\\python.exe -c \"import plyfile; print\\('plyfile OK'\\)\")",
+      "PowerShell(D:\\\\SoftWare\\\\miniconda3\\\\python.exe d:\\\\code\\\\warp_SPH\\\\check_ply.py)",
+      "Bash(D:\\\\SoftWare\\\\miniconda3\\\\python.exe *)",
+      "PowerShell(D:\\\\SoftWare\\\\miniconda3\\\\python.exe d:\\\\code\\\\warp_SPH\\\\fix_ply.py)",
+      "PowerShell(python -c \"from pathlib import Path; lines=Path\\('joint_system.py'\\).read_text\\(\\).splitlines\\(\\); print\\(repr\\(lines[241]\\)\\); print\\(repr\\(lines[242]\\)\\)\")",
+      "PowerShell(python -m py_compile \"SimSPH.py\" \"joint_system.py\")"
+    ]
+  }
+}

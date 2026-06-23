@@ -55,12 +55,17 @@ class DifferentiableCartPoleEnv:
         self.export_fluid_field_grid_spacing = 0.02
         self.export_fluid_field_influence_radius = None
         self.last_segment_steps = 0
+        self._stored_sine_action_wp = None  # 正弦波模式：存储上一次控制输出的 action
+        self._sine_time_offset = 0.0         # 正弦波模式：跨 segment 累计时间偏移
 
     def reset_episode(self):
         self.sim.clear_grad()
         self.sim.reset()
 
         self.action_records = []
+        self._stored_sine_action_wp = None
+        self._sine_time_offset = 0.0
+        self._stored_sine_action_wp = None
         # Do NOT reset export_ply_counter here to avoid overwriting previously exported
         # PLY files across episodes/segments. The counter is initialized in the ctor
         # and may be explicitly set by caller when a fresh test run is desired.
@@ -115,9 +120,9 @@ class DifferentiableCartPoleEnv:
 
         if self.include_time:
             t = float(step) * float(self.sim.frame_dt)
-            # Use sin/cos encoding for time synchronized with wave boundary frequency
-            # waveBoundaryFrequency = 1.0 Hz -> period = 1.0 second
-            omega = 2.0 * np.pi / 1.0  # Period = 1.0s (matches wave boundary frequency)
+            # 使用场景配置中的挡板运动频率进行 sin/cos 时间编码
+            wave_freq = float(getattr(self.sim, 'wave_boundary_frequency', 1.0) or 1.0)
+            omega = 2.0 * np.pi * wave_freq
             state_parts.append(float(np.sin(omega * t)))
             state_parts.append(float(np.cos(omega * t)))
         else:
@@ -230,6 +235,86 @@ class DifferentiableCartPoleEnv:
         action_torch = action_xyz.reshape(1, 3).to(device=target_device, dtype=torch.float32)
         return wp.from_torch(action_torch, dtype=wp.vec3, requires_grad=True)
 
+    def _get_bladder_info(self):
+        """返回 (bladder_volume, buoyancy_force) 或 (None, None)（若鱼鳔未启用）。
+        由 FishEnv 覆写以提供鱼鳔状态。"""
+        return None, None
+
+    def _get_current_joint_angle(self, step):
+        """计算 body→tail 绕 Y 轴的当前关节角 (rad)。
+        使用与 PD 内核相同的四元数相对旋转公式。"""
+        body_id = getattr(self, 'body_rigid_id', None)
+        tail_id = getattr(self, 'tail_rigid_id', None)
+        if body_id is None or tail_id is None or body_id == tail_id:
+            return None
+        qb = self.sim.rigid_quaternion_arrays[step].numpy()[body_id].copy()
+        qt = self.sim.rigid_quaternion_arrays[step].numpy()[tail_id].copy()
+        # Warp quat: (x, y, z, w) — 与 PD 内核中手动展开的公式一致
+        qb_x, qb_y, qb_z, qb_w = qb[0], qb[1], qb[2], qb[3]
+        qt_x, qt_y, qt_z, qt_w = qt[0], qt[1], qt[2], qt[3]
+        # q_rel = qb^{-1} * qt
+        qr_w = qb_w * qt_w + qb_x * qt_x + qb_y * qt_y + qb_z * qt_z
+        qr_y = qb_w * qt_y + qb_x * qt_z - qb_y * qt_w - qb_z * qt_x
+        return float(2.0 * np.arctan2(qr_y, qr_w))
+
+    def _get_pd_target_angle(self, action, sim_time):
+        """计算 PD 控制器的目标摆动角度 (rad)。
+        action[0]=频率(Hz), action[1]=最大摆动角度(rad)"""
+        freq = float(action[0])
+        amp = float(action[1])
+        phase_offset = float(getattr(self.sim, 'sine_phase_offset', 0.0))
+        phase = 2.0 * np.pi * freq * sim_time + phase_offset
+        return float(amp * np.sin(phase))
+
+    def _get_position_error(self, step):
+        """返回鱼身当前位置与目标位置之差 (dx, dy, dz)，用于 use_x_loss 诊断。
+        仅在 FishTaskNew 设置了 target_body_x 时有效。"""
+        task = getattr(self.sim, 'task', None)
+        target = getattr(task, 'target_body_x', None)
+        if target is None:
+            return None
+        body_id = getattr(self, 'body_rigid_id', None)
+        if body_id is None:
+            return None
+        current_x = self.sim.rigid_x_arrays[step].numpy()[body_id]
+        return np.array([float(current_x[0] - target[0]),
+                         float(current_x[1] - target[1]),
+                         float(current_x[2] - target[2])], dtype=np.float32)
+
+    def _get_pd_torque_info(self, action, sim_time, step):
+        """返回 PD 控制器的 (torque, target_omega, current_omega, Kp, Kd)。
+        仅在 sine_action 模式下有意义。"""
+        joint_angle = self._get_current_joint_angle(step)
+        target_angle = self._get_pd_target_angle(action, sim_time) if len(action) >= 2 else None
+        if target_angle is None or joint_angle is None:
+            return None
+
+        freq = float(action[0])
+        amp = float(action[1])
+        phase_offset = float(getattr(self.sim, 'sine_phase_offset', 0.0))
+        phase = 2.0 * np.pi * freq * sim_time + phase_offset
+        target_omega = float(amp * 2.0 * np.pi * freq * np.cos(phase))
+
+        body_id = getattr(self, 'body_rigid_id', -1)
+        tail_id = getattr(self, 'tail_rigid_id', -1)
+        ob = self.sim.rigid_omega_arrays[step].numpy()[body_id]
+        ot = self.sim.rigid_omega_arrays[step].numpy()[tail_id]
+        current_omega = float(ot[1] - ob[1])
+
+        Kp = float(getattr(self.sim, 'pd_kp', 100.0))
+        Kd = float(getattr(self.sim, 'pd_kd', 2.0))
+        angle_error = target_angle - joint_angle
+        omega_error = target_omega - current_omega
+        torque = Kp * angle_error + Kd * omega_error
+
+        return {
+            "torque": torque,
+            "target_omega": target_omega,
+            "current_omega": current_omega,
+            "Kp": Kp,
+            "Kd": Kd,
+        }
+
     def apply_action(self, step, action_wp, tape=None):
         if tape is None:
             wp.launch(
@@ -282,6 +367,14 @@ class DifferentiableCartPoleEnv:
             except TypeError:
                 self.sim.task.compute_loss()
 
+    def _extract_physics_info(self, end_step):
+        """从 task 中提取 loss 计算使用的物理量信息。"""
+        info = {}
+        task = getattr(self.sim, "task", None)
+        if task is not None and hasattr(task, "get_loss_physics_info"):
+            info = task.get_loss_physics_info(end_step)
+        return info
+
     def forward_backward(
         self,
         controller,
@@ -313,14 +406,47 @@ class DifferentiableCartPoleEnv:
                 rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
                 current_time = float(global_t) * float(self.sim.frame_dt)
 
-                self.apply_action(local_t, action_wp, current_tape)
+                # 读取鱼身前向线速度（仅 fish task 且启用 use_v_loss 时）
+                use_v_loss = getattr(getattr(self.sim, 'task', None), 'use_v_loss', False)
+                body_v = None
+                forward_vel = None
+                body_rigid_id = getattr(self, 'body_rigid_id', None)
+                if body_rigid_id is not None and use_v_loss:
+                    from scipy.spatial.transform import Rotation as _R
+                    bv = self.sim.rigid_v_arrays[local_t].numpy()[body_rigid_id].copy()
+                    bq = self.sim.rigid_quaternion_arrays[local_t].numpy()[body_rigid_id].copy()
+                    fwd = _R.from_quat([bq[0], bq[1], bq[2], bq[3]]).apply([1.0, 0.0, 0.0])
+                    fv = float(np.dot(fwd, bv))
+                    body_v = bv
+                    forward_vel = fv
 
+                # 正弦波模式：只存储 action 供后续每步连续施加；直接力矩模式：立即施加
+                if getattr(self, 'sine_action', False):
+                    self._stored_sine_action_wp = action_wp
+                else:
+                    self.apply_action(local_t, action_wp, current_tape)
+
+                bladder_v, bladder_f = self._get_bladder_info()
+                joint_angle = self._get_current_joint_angle(local_t)
+                action_np = action_torch.detach().cpu().numpy().astype(np.float32)
+                target_angle = None
+                torque_info = None
+                if getattr(self, 'sine_action', False) and len(action_np) >= 2:
+                    target_angle = self._get_pd_target_angle(action_np, current_time)
+                    torque_info = self._get_pd_torque_info(action_np, current_time, local_t)
                 action_record = {
                     "step": global_t,
                     "time": current_time,
                     "rod_quat": rod_quat,
-                    "action": action_torch.detach().cpu().numpy().astype(np.float32),
+                    "body_v": body_v,
+                    "forward_vel": forward_vel,
+                    "action": action_np,
                     "state": state_np,
+                    "bladder_volume": bladder_v,
+                    "buoyancy_force": bladder_f,
+                    "joint_angle": joint_angle,
+                    "target_angle": target_angle,
+                    "torque_info": torque_info,
                 }
                 self.action_records.append(action_record)
                 step_action_entries[local_t] = {
@@ -329,6 +455,11 @@ class DifferentiableCartPoleEnv:
                     "action_wp": action_wp,
                     "record": action_record,
                 }
+
+            # 正弦波模式：每步施加存储的 [freq, amp]，实现连续摆动
+            if getattr(self, 'sine_action', False) and \
+               getattr(self, '_stored_sine_action_wp', None) is not None:
+                self.apply_action(local_t, self._stored_sine_action_wp, current_tape)
 
             self.sim.step(local_t)
 
@@ -370,10 +501,20 @@ class DifferentiableCartPoleEnv:
                 action_grad_norms.append(float(torch.linalg.norm(grad_tensor).item()))
                 record["grad"] = grad_vec.copy()
 
+                fv_str = f" fwd_vel={record['forward_vel']:.4f}" if record.get('forward_vel') is not None else ""
+                bv_str = f" body_v=({record['body_v'][0]:.3f},{record['body_v'][1]:.3f},{record['body_v'][2]:.3f})" if record.get('body_v') is not None else ""
+                bl_str = f" bladder_v={record['bladder_volume']:.3e} buoy_f={record['buoyancy_force']:.4f}" if record.get('bladder_volume') is not None else ""
+                ja_str = f" joint_angle={record['joint_angle']:.4f}" if record.get('joint_angle') is not None else ""
+                ta_str = f" target_angle={record['target_angle']:.4f}" if record.get('target_angle') is not None else ""
+                ti = record.get('torque_info') or {}
+                tq_str = f" torque={ti['torque']:.4f}" if ti.get('torque') is not None else ""
+                pe = record.get('pos_error')
+                pe_str = f" pos_err=({pe[0]:.3f},{pe[1]:.3f},{pe[2]:.3f})" if pe is not None else ""
                 print(
                     f"[action step] step={record['step']} time={record['time']} "
-                    f"rod_quat={record['rod_quat']} action={record['action']} "
-                    f"grad={record['grad']}"
+                    f"rod_quat={record['rod_quat']} action={record['action']}"
+                    f"{fv_str}{bv_str}{bl_str}{ja_str}{ta_str}{tq_str}{pe_str}"
+                    f" grad={record['grad']}"
                 )
 
                 if collect_replay:
@@ -411,6 +552,8 @@ class DifferentiableCartPoleEnv:
 
         exceed_threshold = loss_threshold is not None and loss_val > loss_threshold
 
+        physics_info = self._extract_physics_info(backward_steps)
+
         return {
             "loss": loss_val,
             "action_grad_norm": avg_action_grad_norm,
@@ -418,6 +561,7 @@ class DifferentiableCartPoleEnv:
             "early_terminated": bool(exceed_threshold),
             "action_torch_vars": batched_action_torch_vars,
             "action_grad_tensors": batched_grad_tensors,
+            "physics_info": physics_info,
         }
 
     def forward_backward_with_controller(
@@ -458,14 +602,50 @@ class DifferentiableCartPoleEnv:
                 rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
                 current_time = float(global_t) * float(self.sim.frame_dt)
 
-                self.apply_action(local_t, action_wp, current_tape)
+                # 读取鱼身前向线速度（仅 fish task 且启用 use_v_loss 时）
+                use_v_loss = getattr(getattr(self.sim, 'task', None), 'use_v_loss', False)
+                body_v = None
+                forward_vel = None
+                body_rigid_id = getattr(self, 'body_rigid_id', None)
+                if body_rigid_id is not None and use_v_loss:
+                    from scipy.spatial.transform import Rotation as _R
+                    bv = self.sim.rigid_v_arrays[local_t].numpy()[body_rigid_id].copy()
+                    bq = self.sim.rigid_quaternion_arrays[local_t].numpy()[body_rigid_id].copy()
+                    fwd = _R.from_quat([bq[0], bq[1], bq[2], bq[3]]).apply([1.0, 0.0, 0.0])
+                    fv = float(np.dot(fwd, bv))
+                    body_v = bv
+                    forward_vel = fv
 
+                # 正弦波模式：只存储 action 供后续每步连续施加；直接力矩模式：立即施加
+                if getattr(self, 'sine_action', False):
+                    self._stored_sine_action_wp = action_wp
+                else:
+                    self.apply_action(local_t, action_wp, current_tape)
+
+                bladder_v, bladder_f = self._get_bladder_info()
+                joint_angle = self._get_current_joint_angle(local_t)
+                action_np = action_torch.detach().cpu().numpy().astype(np.float32)
+                target_angle = None
+                torque_info = None
+                pos_error = None
+                if getattr(self, 'sine_action', False) and len(action_np) >= 2:
+                    target_angle = self._get_pd_target_angle(action_np, current_time)
+                    torque_info = self._get_pd_torque_info(action_np, current_time, local_t)
+                pos_error = self._get_position_error(local_t)
                 action_record = {
                     "step": global_t,
                     "time": current_time,
                     "rod_quat": rod_quat,
-                    "action": action_torch.detach().cpu().numpy().astype(np.float32),
+                    "body_v": body_v,
+                    "forward_vel": forward_vel,
+                    "action": action_np,
                     "state": state_np,
+                    "bladder_volume": bladder_v,
+                    "buoyancy_force": bladder_f,
+                    "joint_angle": joint_angle,
+                    "target_angle": target_angle,
+                    "torque_info": torque_info,
+                    "pos_error": pos_error,
                 }
                 self.action_records.append(action_record)
                 step_action_entries[local_t] = {
@@ -474,6 +654,11 @@ class DifferentiableCartPoleEnv:
                     "action_wp": action_wp,
                     "record": action_record,
                 }
+
+            # 正弦波模式：每步施加存储的 [freq, amp]，实现连续摆动
+            if getattr(self, 'sine_action', False) and \
+               getattr(self, '_stored_sine_action_wp', None) is not None:
+                self.apply_action(local_t, self._stored_sine_action_wp, current_tape)
 
             self.sim.step(local_t)
 
@@ -524,15 +709,26 @@ class DifferentiableCartPoleEnv:
                 torch.autograd.backward([action_torch], grad_tensors=[grad_tensor])
 
             for i in reversed(records):
+                fv_str = f" fwd_vel={i['forward_vel']:.4f}" if i.get('forward_vel') is not None else ""
+                bv_str = f" body_v=({i['body_v'][0]:.3f},{i['body_v'][1]:.3f},{i['body_v'][2]:.3f})" if i.get('body_v') is not None else ""
+                bl_str = f" bladder_v={i['bladder_volume']:.3e} buoy_f={i['buoyancy_force']:.4f}" if i.get('bladder_volume') is not None else ""
+                ja_str = f" joint_angle={i['joint_angle']:.4f}" if i.get('joint_angle') is not None else ""
+                ta_str = f" target_angle={i['target_angle']:.4f}" if i.get('target_angle') is not None else ""
+                ti = i.get('torque_info') or {}
+                tq_str = f" torque={ti['torque']:.4f}" if ti.get('torque') is not None else ""
+                pe = i.get('pos_error')
+                pe_str = f" pos_err=({pe[0]:.3f},{pe[1]:.3f},{pe[2]:.3f})" if pe is not None else ""
                 print(
                     f"[action step] step={i['step']} time={i['time']} "
-                    f"rod_quat={i['rod_quat']} action={i['action']} "
-                    f"grad={i['grad']}"
+                    f"rod_quat={i['rod_quat']} action={i['action']}"
+                    f"{fv_str}{bv_str}{bl_str}{ja_str}{ta_str}{tq_str}{pe_str}"
+                    f" grad={i['grad']}"
                 )
 
         loss_val = float(np.asarray(self.sim.loss.numpy()).reshape(-1)[0])
         avg_action_grad_norm = float(np.mean(np.asarray(action_grad_norms, dtype=np.float32))) if action_grad_norms else 0.0
         controls = int(len(step_action_entries))
+        physics_info = self._extract_physics_info(backward_steps)
 
         exceed_threshold = loss_threshold is not None and loss_val > loss_threshold
         if exceed_threshold:
@@ -547,6 +743,7 @@ class DifferentiableCartPoleEnv:
                 "action_grad_norm": avg_action_grad_norm,
                 "controls": controls,
                 "early_terminated": True,
+                "physics_info": physics_info,
             }
 
         # If collecting batch gradients, capture per-parameter gradients into batch_buffer
@@ -580,6 +777,7 @@ class DifferentiableCartPoleEnv:
                 "action_grad_norm": avg_action_grad_norm,
                 "controls": controls,
                 "early_terminated": False,
+                "physics_info": physics_info,
             }
 
         # Otherwise perform immediate optimizer step
@@ -593,6 +791,7 @@ class DifferentiableCartPoleEnv:
             "action_grad_norm": avg_action_grad_norm,
             "controls": controls,
             "early_terminated": False,
+            "physics_info": physics_info,
         }
 
     def _backward_one_segment(
@@ -608,7 +807,32 @@ class DifferentiableCartPoleEnv:
         tape.backward(self.sim.loss)
 
         loss_val = float(np.asarray(self.sim.loss.numpy()).reshape(-1)[0])
-        print(f"[segment] end_step={end_step} loss = {loss_val:.6e}")
+        physics_info = self._extract_physics_info(end_step)
+        # Build physics info string for print
+        physics_str = ""
+        if physics_info:
+            parts = []
+            if "body_angle_err" in physics_info:
+                parts.append(f"body_angle_err={physics_info['body_angle_err']:.4f}")
+            if "tail_angle_err" in physics_info:
+                parts.append(f"tail_angle_err={physics_info['tail_angle_err']:.4f}")
+            if "pos_err" in physics_info:
+                parts.append(f"pos_err={physics_info['pos_err']:.4f}")
+            if "forward_vel" in physics_info:
+                parts.append(f"forward_vel={physics_info['forward_vel']:.4f}")
+            if "tail_periodic_angle_err" in physics_info:
+                parts.append(f"tail_periodic_angle_err={physics_info['tail_periodic_angle_err']:.4f}")
+            if "loss_pose" in physics_info:
+                parts.append(f"L_pose={physics_info['loss_pose']:.4e}")
+            if "loss_position" in physics_info:
+                parts.append(f"L_pos={physics_info['loss_position']:.4e}")
+            if "loss_velocity" in physics_info:
+                parts.append(f"L_vel={physics_info['loss_velocity']:.4e}")
+            if "loss_tail_periodic" in physics_info:
+                parts.append(f"L_tail={physics_info['loss_tail_periodic']:.4e}")
+            if parts:
+                physics_str = " | " + " ".join(parts)
+        print(f"[segment] end_step={end_step} loss = {loss_val:.6e}{physics_str}")
 
         action_grads = []
         for idx, action_wp in enumerate(action_wp_vars):
@@ -618,10 +842,12 @@ class DifferentiableCartPoleEnv:
             grad_vec = np.array([grad_np[0], grad_np[1], grad_np[2]], dtype=np.float32)
             action_grads.append(grad_vec)
 
+            bl_str = f" bladder_v={record['bladder_volume']:.3e} buoy_f={record['buoyancy_force']:.4f}" if record.get('bladder_volume') is not None else ""
             print(
                 f"[action {idx}] step={record['step']} time={record['time']} "
-                f"rod_quat={record['rod_quat']} action={record['action']} "
-                f"grad={grad_vec}"
+                f"rod_quat={record['rod_quat']} action={record['action']}"
+                f"{bl_str}"
+                f" grad={grad_vec}"
             )
 
         action_grad_norm = 0.0
@@ -666,6 +892,7 @@ class DifferentiableCartPoleEnv:
         early_terminated = False
         rollout_action_torch = []
         rollout_action_grad_tensors = []
+        last_physics_info = {}
 
         while global_step < total_sim_steps:
             backward_steps = min(diff_horizon, total_sim_steps - global_step)
@@ -697,6 +924,7 @@ class DifferentiableCartPoleEnv:
             segment_losses.append(float(seg_stats["loss"]))
             segment_action_grad_norms.append(float(seg_stats["action_grad_norm"]))
             processed_steps += backward_steps
+            last_physics_info = seg_stats.get("physics_info", {})
 
             if seg_stats["early_terminated"]:
                 early_terminated = True
@@ -706,6 +934,9 @@ class DifferentiableCartPoleEnv:
                 break
 
             global_step += backward_steps
+            # 累加正弦波时间偏移，保证跨 segment 相位连续
+            if getattr(self, 'sine_action', False):
+                self._sine_time_offset += backward_steps * self.sim.frame_dt
             if global_step >= total_sim_steps:
                 break
 
@@ -743,6 +974,7 @@ class DifferentiableCartPoleEnv:
             "early_terminated": bool(early_terminated),
             "action_torch_vars": rollout_action_torch,
             "action_grad_tensors": rollout_action_grad_tensors,
+            "physics_info": last_physics_info,
         }
 
     def rollout_forward_only(self, controller, total_sim_steps=None):
@@ -799,21 +1031,49 @@ class DifferentiableCartPoleEnv:
                         rod_quat = self.sim.rigid_quaternion_arrays[local_t].numpy()[self.rod_rigid_id].copy()
                         current_time = float(global_t) * float(self.sim.frame_dt)
 
-                        self.apply_action(local_t, action_wp, tape=None)
+                        # 正弦波模式：只存储 action 供后续每步连续施加
+                        if getattr(self, 'sine_action', False):
+                            self._stored_sine_action_wp = action_wp
+                        else:
+                            self.apply_action(local_t, action_wp, tape=None)
 
+                        bladder_v, bladder_f = self._get_bladder_info()
+                        joint_angle = self._get_current_joint_angle(local_t)
+                        action_np = action_torch.detach().cpu().numpy().astype(np.float32)
+                        target_angle = None
+                        torque_info = None
+                        pos_error = None
+                        if getattr(self, 'sine_action', False) and len(action_np) >= 2:
+                            target_angle = self._get_pd_target_angle(action_np, current_time)
+                            torque_info = self._get_pd_torque_info(action_np, current_time, local_t)
+                        pos_error = self._get_position_error(local_t)
                         action_records.append(
                             {
                                 "step": global_t,
                                 "time": current_time,
                                 "rod_quat": rod_quat,
-                                "action": action_torch.detach().cpu().numpy().astype(np.float32),
+                                "action": action_np,
+                                "bladder_volume": bladder_v,
+                                "buoyancy_force": bladder_f,
+                                "joint_angle": joint_angle,
+                                "target_angle": target_angle,
+                                "torque_info": torque_info,
+                                "pos_error": pos_error,
                             }
                         )
                         control_count += 1
 
+                    # 正弦波模式：每步施加存储的 [freq, amp]，实现连续摆动
+                    if getattr(self, 'sine_action', False) and \
+                       getattr(self, '_stored_sine_action_wp', None) is not None:
+                        self.apply_action(local_t, self._stored_sine_action_wp, tape=None)
+
                     self.sim.step(local_t)
 
                 global_step += backward_steps
+                # 累加正弦波时间偏移，保证跨 segment 相位连续
+                if getattr(self, 'sine_action', False):
+                    self._sine_time_offset += backward_steps * self.sim.frame_dt
                 if global_step < total_sim_steps:
                     if self.export_before_diff_reset and self.export_series_prefix:
                         seg_output_interval = max(1, int(self.export_output_interval))
@@ -846,11 +1106,43 @@ class DifferentiableCartPoleEnv:
             self.sim.task.compute_loss()
 
         loss_val = float(np.asarray(self.sim.loss.numpy()).reshape(-1)[0])
-        print(f"[test] loss = {loss_val:.6e} | controls={control_count}")
+        physics_info = self._extract_physics_info(self.last_segment_steps)
+        physics_str = ""
+        if physics_info:
+            parts = []
+            if "body_angle_err" in physics_info:
+                parts.append(f"body_angle_err={physics_info['body_angle_err']:.4f}")
+            if "tail_angle_err" in physics_info:
+                parts.append(f"tail_angle_err={physics_info['tail_angle_err']:.4f}")
+            if "pos_err" in physics_info:
+                parts.append(f"pos_err={physics_info['pos_err']:.4f}")
+            if "forward_vel" in physics_info:
+                parts.append(f"forward_vel={physics_info['forward_vel']:.4f}")
+            if "tail_periodic_angle_err" in physics_info:
+                parts.append(f"tail_periodic_angle_err={physics_info['tail_periodic_angle_err']:.4f}")
+            if "loss_pose" in physics_info:
+                parts.append(f"L_pose={physics_info['loss_pose']:.4e}")
+            if "loss_position" in physics_info:
+                parts.append(f"L_pos={physics_info['loss_position']:.4e}")
+            if "loss_velocity" in physics_info:
+                parts.append(f"L_vel={physics_info['loss_velocity']:.4e}")
+            if "loss_tail_periodic" in physics_info:
+                parts.append(f"L_tail={physics_info['loss_tail_periodic']:.4e}")
+            if parts:
+                physics_str = " | " + " ".join(parts)
+        print(f"[test] loss = {loss_val:.6e} | controls={control_count}{physics_str}")
         for idx, record in enumerate(action_records):
+            bl_str = f" bladder_v={record['bladder_volume']:.3e} buoy_f={record['buoyancy_force']:.4f}" if record.get('bladder_volume') is not None else ""
+            ja_str = f" joint_angle={record['joint_angle']:.4f}" if record.get('joint_angle') is not None else ""
+            ta_str = f" target_angle={record['target_angle']:.4f}" if record.get('target_angle') is not None else ""
+            ti = record.get('torque_info') or {}
+            tq_str = f" torque={ti['torque']:.4f}" if ti.get('torque') is not None else ""
+            pe = record.get('pos_error')
+            pe_str = f" pos_err=({pe[0]:.3f},{pe[1]:.3f},{pe[2]:.3f})" if pe is not None else ""
             print(
                 f"[test action {idx}] step={record['step']} time={record['time']} "
                 f"rod_quat={record['rod_quat']} action={record['action']}"
+                f"{bl_str}{ja_str}{ta_str}{tq_str}{pe_str}"
             )
 
         return loss_val, control_count

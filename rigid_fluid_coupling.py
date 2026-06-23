@@ -114,21 +114,26 @@ def compute_rigid_cm_mass_kernel(
     rho: wp.array(dtype=float),
     rigid_mass: wp.array(dtype=float),
     rigid_rest_cm: wp.array(dtype=wp.vec3),
-    m_V0: float
+    m_V0: float,
+    material: wp.array(dtype=int),
 ):
     tid = wp.tid()
+    # 仅处理刚体粒子，跳过流体等其他类型
+    if material[tid] != MaterialType.SOLID:
+        return
+
     obj_id = object_id[tid]
-    
+
     vol = m_V[tid]
     if vol == 0.0:
         vol = m_V0
 
     mass = m_V0 * rho[tid]
     wp.atomic_add(rigid_mass, obj_id, mass)
-    
+
     pos = x[tid]
     pos_mass = pos * mass
-    
+
     wp.atomic_add(rigid_rest_cm, obj_id, pos_mass)
 
 @wp.kernel
@@ -154,9 +159,14 @@ def compute_rigid_inertia_kernel(
     rho: wp.array(dtype=float),
     rigid_rest_cm: wp.array(dtype=wp.vec3),
     rigid_inertia_accum_flat: wp.array(dtype=float), # Flattened 3x3 per object -> 9 floats
-    m_V0: float
+    m_V0: float,
+    material: wp.array(dtype=int),
 ):
     tid = wp.tid()
+    # 仅处理刚体粒子，跳过流体等其他类型
+    if material[tid] != MaterialType.SOLID:
+        return
+
     obj_id = object_id[tid]
     
     # vol = m_V[tid]

@@ -17,6 +17,45 @@ from functools import reduce
 HASH_GRID_SIZE_SCALE = 2 # TODO: 注意size过小对前向模拟结果的影响
 
 
+@wp.kernel
+def apply_swim_bladder_buoyancy_kernel(
+    swim_bladder_volume: wp.array(dtype=wp.float32),
+    body_rigid_id: int,
+    rigid_force: wp.array(dtype=wp.vec3),
+    rigid_torque: wp.array(dtype=wp.vec3),
+    rigid_x: wp.array(dtype=wp.vec3),
+    rigid_quaternion: wp.array(dtype=wp.quat),
+    fluid_density: float,
+    gravity_magnitude: float,
+    vertical_offset: float,
+    horizontal_offset: float,
+):
+    """施加鱼鳔浮力到鱼身刚体。
+
+    浮力大小 = fluid_density * |g| * V_bladder，方向始终竖直向上 (+Y)。
+    作用点在鱼身局部坐标系中：垂直向上 vertical_offset、水平向鱼尾 horizontal_offset，
+    经四元数旋转到世界系后，同时产生向上的力、俯仰力矩和恢复力矩。
+    """
+    tid = wp.tid()
+    if tid == 0:
+        V = swim_bladder_volume[0]
+        # 浮力 = 流体密度 × 重力大小 × 鱼鳔体积，方向始终竖直向上 (+Y)
+        F_mag = fluid_density * gravity_magnitude * V
+        F = wp.vec3(0.0, F_mag, 0.0)
+
+        # 作用点在鱼身局部坐标系：上方 + 向鱼尾方向
+        q = rigid_quaternion[body_rigid_id]
+        local_offset = wp.vec3(horizontal_offset, vertical_offset, 0.0)
+        offset = wp.quat_rotate(q, local_offset)
+
+        # 累加到刚体合力和合力矩
+        wp.atomic_add(rigid_force, body_rigid_id, F)
+
+        # 力矩 τ = r × F
+        tau = wp.cross(offset, F)
+        wp.atomic_add(rigid_torque, body_rigid_id, tau)
+
+
 class SimSPH:
     def initialize(self):
         # print(f"Initialized particle volumes m_V0 = {self.m_V0}")
@@ -74,8 +113,10 @@ class SimSPH:
                 self.domian_end = np.array(d_end)
                 self.domain_end = np.array(d_end)
 
-            # Direct boundary wavemaker parameters (left x-boundary).
+            # Direct boundary wavemaker parameters (left x-boundary or z-boundary).
             self.wave_boundary_enable = bool(config.get_cfg("waveBoundaryEnable") or False)
+            _axis = config.get_cfg("waveBoundaryAxis")
+            self.wave_boundary_axis = str(_axis) if _axis is not None else "x"
             amp_cfg = config.get_cfg("waveBoundaryAmplitude")
             freq_cfg = config.get_cfg("waveBoundaryFrequency")
             phase_cfg = config.get_cfg("waveBoundaryPhase")
@@ -133,12 +174,98 @@ class SimSPH:
             self.articulated_joints = None
         else:
             self.wave_boundary_enable = False
+            self.wave_boundary_axis = "x"
             self.wave_boundary_amplitude = 0.0
             self.wave_boundary_frequency = 0.0
             self.wave_boundary_phase = 0.0
             self.scene_rigid_object_ids = []
             self.num_articulated_joints = 0
             self.articulated_joints = None
+
+        # 鱼鳔浮力参数（优先从 JSON 配置读取，不存在时使用默认值）
+        if config is not None:
+            self.swim_bladder_enable = bool(config.get_cfg("swimBladderEnable") or False)
+            # 注意: 不能用 `or default` 模式，因为 Python 将 0.0 视为 falsy，
+            # 会导致 JSON 中显式设为 0.0 的字段被默认值覆盖
+            _v = config.get_cfg("swimBladderMaxVolume")
+            self.swim_bladder_max_volume = float(_v) if _v is not None else 2.0e-4
+            _v = config.get_cfg("swimBladderMinVolume")
+            self.swim_bladder_min_volume = float(_v) if _v is not None else -5.0e-5
+            _v = config.get_cfg("swimBladderVerticalOffset")
+            self.swim_bladder_vertical_offset = float(_v) if _v is not None else 0.02
+            _v = config.get_cfg("swimBladderHorizontalOffset")
+            self.swim_bladder_horizontal_offset = float(_v) if _v is not None else 0.01
+            _v = config.get_cfg("swimBladderActionMin")
+            self.swim_bladder_action_min = float(_v) if _v is not None else -1.0e-4
+            _v = config.get_cfg("swimBladderActionMax")
+            self.swim_bladder_action_max = float(_v) if _v is not None else 1.0e-4
+            # 直接力矩模式的角速度上下界（rad/s），用于非 sine_action 模式下的控制器输出限制
+            _v = config.get_cfg("actionTorqueMin")
+            self.action_torque_min = float(_v) if _v is not None else -1.0
+            _v = config.get_cfg("actionTorqueMax")
+            self.action_torque_max = float(_v) if _v is not None else 1.0
+            # 鱼鳔初始体积（不存在时默认使用 min/max 中值）
+            _v = config.get_cfg("swimBladderInitVolume")
+            if _v is not None:
+                self.swim_bladder_init_volume = float(_v)
+            else:
+                self.swim_bladder_init_volume = 0.5 * (self.swim_bladder_min_volume + self.swim_bladder_max_volume)
+            # 额外重力初始值（用于可微模拟中增大刚体梯度信号）
+            _v = config.get_cfg("additionalGravityInit")
+            self.additional_gravity_init = float(_v) if _v is not None else 0.0
+            # 直接参数优化模式的初始值（正弦波频率、幅度、鱼鳔变化率）
+            _v = config.get_cfg("optimizeFreqInit")
+            self.optimize_freq_init = float(_v) if _v is not None else 2.0
+            _v = config.get_cfg("optimizeAmpInit")
+            self.optimize_amp_init = float(_v) if _v is not None else 1.0
+            _v = config.get_cfg("optimizeBladderDeltaInit")
+            self.optimize_bladder_delta_init = float(_v) if _v is not None else 0.0
+            # 正弦波力矩相位偏移 (弧度)
+            _v = config.get_cfg("sinePhaseOffset")
+            self.sine_phase_offset = float(_v) if _v is not None else 0.0
+            # 正弦波频率/幅度上下界（用于 sine_action 模式下控制器输出限制）
+            _v = config.get_cfg("sineFreqMin")
+            self.sine_freq_min = float(_v) if _v is not None else 0.1
+            _v = config.get_cfg("sineFreqMax")
+            self.sine_freq_max = float(_v) if _v is not None else 8.0
+            _v = config.get_cfg("sineAmpMin")
+            self.sine_amp_min = float(_v) if _v is not None else 0.05
+            _v = config.get_cfg("sineAmpMax")
+            self.sine_amp_max = float(_v) if _v is not None else 1.5
+            # PD 控制器增益（用于 sine_action 模式下的关节角度跟踪）
+            _v = config.get_cfg("pdKp")
+            self.pd_kp = float(_v) if _v is not None else 100.0
+            _v = config.get_cfg("pdKd")
+            self.pd_kd = float(_v) if _v is not None else 2.0
+        else:
+            self.swim_bladder_enable = False
+            self.swim_bladder_max_volume = 2.0e-4
+            self.swim_bladder_min_volume = -5.0e-5
+            self.swim_bladder_vertical_offset = 0.02
+            self.swim_bladder_horizontal_offset = 0.01
+            self.swim_bladder_action_min = -1.0e-4
+            self.swim_bladder_action_max = 1.0e-4
+            self.action_torque_min = -1.0
+            self.action_torque_max = 1.0
+            self.swim_bladder_init_volume = 0.5 * (self.swim_bladder_min_volume + self.swim_bladder_max_volume)
+            self.additional_gravity_init = 0.0
+            self.optimize_freq_init = 2.0
+            self.optimize_amp_init = 1.0
+            self.optimize_bladder_delta_init = 0.0
+            self.sine_phase_offset = 0.0
+            self.sine_freq_min = 0.1
+            self.sine_freq_max = 8.0
+            self.sine_amp_min = 0.05
+            self.sine_amp_max = 1.5
+            self.pd_kp = 100.0
+            self.pd_kd = 2.0
+        self.swim_bladder_volume = wp.zeros(1, dtype=wp.float32, requires_grad=True)
+        # 初始体积从 JSON 配置读取（默认 min/max 中值）
+        wp.copy(self.swim_bladder_volume, wp.array(
+            [self.swim_bladder_init_volume],
+            dtype=wp.float32,
+        ))
+        self.swim_bladder_body_id = -1            # 鱼身刚体 ID，由 FishEnv 设置
 
         self.time_step = 0.0
         # recompute constants
@@ -209,6 +336,10 @@ class SimSPH:
 
         self.num_particles_curr_initial = self.num_particles_curr
 
+        # Save swim bladder initial volume
+        self.swim_bladder_volume_initial = wp.zeros(1, dtype=wp.float32)
+        wp.copy(self.swim_bladder_volume_initial, self.swim_bladder_volume)
+
     def reset(self):
         wp.copy(self.x, self.x_initial)
         wp.copy(self.v, self.v_initial)
@@ -218,16 +349,32 @@ class SimSPH:
         wp.copy(self.materialMarks.is_dynamic, self.is_dynamic_initial)
 
         self.num_particles_curr = self.num_particles_curr_initial
-        
+
         if self.num_rigid_bodies > 0:
             wp.copy(self.rbs.rigid_x, self.rigid_x_initial)
             wp.copy(self.rbs.rigid_v, self.rigid_v_initial)
             wp.copy(self.rbs.rigid_omega, self.rigid_omega_initial)
             wp.copy(self.rbs.rigid_quaternion, self.rigid_quaternion_initial)
 
+        # Reset swim bladder volume
+        if hasattr(self, 'swim_bladder_volume_initial'):
+            wp.copy(self.swim_bladder_volume, self.swim_bladder_volume_initial)
+
         # Reset simulation clock so wave boundary state returns to initial phase.
         self.sim_time = 0.0
         self.time_step = 0
+
+        # Zero arrays that may retain stale values from previous epochs
+        self.a.zero_()
+        self.pressure.zero_()
+
+        # Zero IISPH solver state if present
+        if hasattr(self, 'a_ii'):
+            self.a_ii.zero_()
+            self.density_deviation.zero_()
+            self.last_pressure.zero_()
+            self.avg_density_error.zero_()
+            self.pressure_a.zero_()
 
     def compute_cube_particle_num(self, start, end):
         num_dim = []
@@ -308,6 +455,8 @@ class SimSPH:
         child_axis_locals = []
         joint_types = []
         inv_stiffness_list = []
+        angle_limit_mins = []
+        angle_limit_maxs = []
 
         def _cfg_rel_to_world(rb_cfg, rel):
             scale = np.array(rb_cfg.get("scale", [1.0, 1.0, 1.0]), dtype=np.float32)
@@ -398,6 +547,9 @@ class SimSPH:
                 else:
                     child_axis_locals.append(np.array([0.0, 0.0, 0.0], dtype=np.float32))
 
+                angle_limit_mins.append(float(joint_cfg.get("angleLimitMin", 0.0)))
+                angle_limit_maxs.append(float(joint_cfg.get("angleLimitMax", 0.0)))
+
         self.num_articulated_joints = len(parent_ids)
         if self.num_articulated_joints == 0:
             return
@@ -411,6 +563,10 @@ class SimSPH:
         self.articulated_joints.child_axis_local = wp.array(np.array(child_axis_locals, dtype=np.float32), dtype=wp.vec3)
         self.articulated_joints.joint_type = wp.array(np.array(joint_types, dtype=np.int32), dtype=wp.int32)
         self.articulated_joints.inv_stiffness = wp.array(np.array(inv_stiffness_list, dtype=np.float32), dtype=wp.float32)
+        self.articulated_joints.angle_limit_min = wp.array(
+            np.array(angle_limit_mins, dtype=np.float32) * (np.pi / 180.0), dtype=wp.float32)
+        self.articulated_joints.angle_limit_max = wp.array(
+            np.array(angle_limit_maxs, dtype=np.float32) * (np.pi / 180.0), dtype=wp.float32)
 
         print(f"Initialized articulated joints: {self.num_articulated_joints}")
 
@@ -561,12 +717,9 @@ class SimSPH:
             density_np = np.full(num_new_particles, float(default_density), dtype=np.float32)
         wp_density_arr = wp.array(density_np, dtype=float)
 
-        if "material" in attrs:
-            material_np = np.array(attrs["material"], dtype=np.int32)
-            if material_np.shape[0] != num_new_particles:
-                raise ValueError("PLY material attribute length does not match particle count")
-        else:
-            material_np = np.full(num_new_particles, int(default_material), dtype=np.int32)
+        # 注意：不使用 PLY 中的 material 属性，始终使用调用方指定的 default_material，
+        # 避免从之前仿真导出的 PLY 中混入非流体粒子（如刚体粒子标记为 material=SOLID）。
+        material_np = np.full(num_new_particles, int(default_material), dtype=np.int32)
         wp_material_arr = wp.array(material_np, dtype=int)
 
         wp_is_dynamic_arr = wp.full(shape=num_new_particles, value=int(is_dynamic), dtype=int)
@@ -886,8 +1039,9 @@ class SimSPH:
                 self.m_V,
                 self.rho,
                 self.rbs.rigid_mass,
-                self.rbs.rigid_rest_cm, 
-                self.m_V0
+                self.rbs.rigid_rest_cm,
+                self.m_V0,
+                self.materialMarks.material,
             ]
         )
         
@@ -925,10 +1079,11 @@ class SimSPH:
                 self.rho,
                 self.rbs.rigid_rest_cm,
                 rigid_inertia_accum_flat,
-                self.m_V0
+                self.m_V0,
+                self.materialMarks.material,
             ]
         )
-        
+
         wp.launch(
             kernel=finalize_rigid_inertia_kernel,
             dim=self.num_objects,
@@ -1236,8 +1391,9 @@ class SimSPH:
                     self.m_V,
                     self.rho,
                     self.rbs.rigid_mass,
-                    self.rbs.rigid_rest_cm, 
-                    self.m_V0
+                    self.rbs.rigid_rest_cm,
+                    self.m_V0,
+                    self.materialMarks.material,
                 ]
             )
 
@@ -1266,7 +1422,8 @@ class SimSPH:
                     self.rho,
                     self.rbs.rigid_rest_cm,
                     rigid_inertia_accum_flat,
-                    self.m_V0
+                    self.m_V0,
+                    self.materialMarks.material,
                 ]
             )
 
@@ -1584,28 +1741,41 @@ class SimSPH:
     def _get_wave_boundary_state(self):
         lower_bound = np.array(self.domain_start, dtype=np.float32)
         upper_bound = np.array(self.domain_end, dtype=np.float32)
-        lower_x_wall_velocity = 0.0
-        upper_x_wall_velocity = 0.0
+        wall_v_x_lower = 0.0
+        wall_v_x_upper = 0.0
+        wall_v_z_lower = 0.0
+        wall_v_z_upper = 0.0
+
+        # 根据配置选择挡板作用轴: "x"=0, "z"=2
+        axis = getattr(self, 'wave_boundary_axis', 'x')
+        axis_idx = 0 if axis == 'x' else 2
 
         if self.wave_boundary_enable and self.wave_boundary_amplitude > 0.0 and self.wave_boundary_frequency > 0.0:
             omega = 2.0 * np.pi * self.wave_boundary_frequency
             # Start from the trough at t=0: shift(0)=0 and wall velocity(0)=0.
             theta = omega * self.sim_time + self.wave_boundary_phase
             shift = 0.5 * self.wave_boundary_amplitude * (1.0 - np.cos(theta))
-            max_shift = 0.2 * float(self.domain_end[0] - self.domain_start[0])
+            max_shift = 0.2 * float(self.domain_end[axis_idx] - self.domain_start[axis_idx])
             shift = min(shift, max_shift)
-            lower_bound[0] = float(self.domain_start[0] + shift)
-            upper_bound[0] = float(self.domain_end[0] + shift)
-            lower_x_wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.sin(theta)
-            upper_x_wall_velocity = lower_x_wall_velocity
+            lower_bound[axis_idx] = float(self.domain_start[axis_idx] + shift)
+            upper_bound[axis_idx] = float(self.domain_end[axis_idx] + shift)
+            wall_velocity = 0.5 * self.wave_boundary_amplitude * omega * np.sin(theta)
+            if axis == 'x':
+                wall_v_x_lower = wall_velocity
+                wall_v_x_upper = wall_velocity
+            else:
+                wall_v_z_lower = wall_velocity
+                wall_v_z_upper = wall_velocity
 
-        return lower_bound, upper_bound, float(lower_x_wall_velocity), float(upper_x_wall_velocity)
+        return (lower_bound, upper_bound,
+                float(wall_v_x_lower), float(wall_v_x_upper),
+                float(wall_v_z_lower), float(wall_v_z_upper))
 
     def step(self, t):
         self.time_step = t
         with wp.ScopedTimer("step", active=self.verbose):
             for _ in range(self.sim_step_to_frame_ratio):
-                lower_bound, upper_bound, lower_x_wall_velocity, upper_x_wall_velocity = self._get_wave_boundary_state()
+                lower_bound, upper_bound, lower_x_wall_v, upper_x_wall_v, lower_z_wall_v, upper_z_wall_v = self._get_wave_boundary_state()
 
                 with wp.ScopedTimer("grid build", active=self.verbose):
                     # build grid
@@ -1628,12 +1798,34 @@ class SimSPH:
                                 wp.vec3(*lower_bound),
                                 wp.vec3(*upper_bound),
                                 self.padding,
-                                lower_x_wall_velocity,
-                                upper_x_wall_velocity,
+                                lower_x_wall_v,
+                                upper_x_wall_v,
+                                lower_z_wall_v,
+                                upper_z_wall_v,
                         ]
                     )
 
                     self.sub_step()
+
+                    # 施加鱼鳔浮力（在刚体积分前）
+                    if self.swim_bladder_enable and self.swim_bladder_body_id >= 0 and self.num_rigid_bodies > 0:
+                        wp.launch(
+                            kernel=apply_swim_bladder_buoyancy_kernel,
+                            dim=1,
+                            inputs=[
+                                self.swim_bladder_volume,
+                                self.swim_bladder_body_id,
+                                self.rbs.rigid_force,
+                                self.rbs.rigid_torque,
+                                self.rbs.rigid_x,
+                                self.rbs.rigid_quaternion,
+                                self.base_density,
+                                abs(self.gravity),
+                                self.swim_bladder_vertical_offset,
+                                self.swim_bladder_horizontal_offset,
+                            ],
+                        )
+
                     g = wp.vec3(0.0, self.gravity, 0.0)
 
                     if self.num_rigid_bodies > 0:

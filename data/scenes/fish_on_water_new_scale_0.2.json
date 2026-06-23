@@ -1,0 +1,129 @@
+{
+	"Configuration": {
+		"fps": 30,
+		"domainStart": [-2.1, 0, -2.1],
+		"domainEnd": [2.1, 4.0, 2.1],
+		"numberOfStepsPerRenderUpdate": 1,
+		"density0": 1000,
+		"simulationMethod": 0,
+		"gravitation": [0.0, -9.81, 0.0],
+		"timeStepSize": 0.0016,
+		"stiffness": 7000,
+		"exponent": 7,
+		"boundaryHandlingMethod": 0,
+		"exportFrame": false,
+		"exportPly": true,
+		"exportObj": false,
+		"stepNum": 2,
+		"maxIterNum": 20,
+		"particleRadius": 0.026,
+		"radius": 0.025,
+		"bounding_box": [[-3.0999999046325684, -0.10000000149011612, -0.8500000238418579], [3.0999999046325684, 0.8500000238418579, 0.8500000238418579]],
+		"waveBoundaryEnable": false,
+		"waveBoundaryAxis": "z",
+		"waveBoundaryAmplitude": 0.3,
+		"waveBoundaryFrequency": 1.0,
+		"waveBoundaryPhase": 0.0,
+
+		"tailPeriodicFreq": 2.0,
+		"tailPeriodicAmp": 0.5,
+
+		"targetTimeSteps": 100,
+		"end_time": 0.5,
+		"backwardInterval": 5,
+
+		"swimBladderEnable": true,
+		"swimBladderMaxVolume": 0.04,
+		"swimBladderMinVolume": 0.02,
+		"swimBladderVerticalOffset": 0.02,
+		"swimBladderHorizontalOffset": -0.18,
+		"swimBladderActionMin": -0.05,
+		"swimBladderActionMax": 0.05,
+
+
+		"optimizeFreqInit": 1,
+		"optimizeAmpInit": 1.0,
+		"optimizeBladderDeltaInit": 0,
+		"sinePhaseOffset": 0.0,
+		
+		"swimBladderInitVolume": 0.01,
+		"additionalGravityInit": -9.0,
+
+		"sineFreqMin": 0.0,
+		"sineFreqMax": 8.0,
+		"sineAmpMin": 0.05,
+		"sineAmpMax": 1.5,
+		"pdKp": 50.0,
+		"pdKd": 5.0
+	},
+	"FluidBlocks": [
+		{
+			"objectId": 0,
+			"plyFile": "data/ply/fish_task_new.ply",
+			"start": [-2, 0.1, -2],
+			"end": [2, 1.5, 2],
+			"translation": [0, 0.0, 0.0],
+			"scale": [1, 1, 1],
+			"velocity": [0.0, 0.0, 0.0],
+			"density": 1000.0,
+			"color": [50, 100, 200],
+			"viscosity": 0.01
+		}
+	],
+	"RigidBodies": [
+		{
+			"comment": "koifish_body",
+			"geometryFile": "./data/models/koifish_body.obj",
+			"density": 1100.0,
+			"translation": [-0.256, 1.4, 0.0],
+			"rotationAxis": [0, 0, 1],
+			"rotationAngle": 0,
+			"scale": [0.2, 0.2, 0.2],
+			"velocity": [0.0, 0.0, 0.0],
+			"angularVelocity": [0.0, 0.0, 0.0],
+			"color": [0.1, 0.4, 0.6, 1.0],
+			"isDynamic": true,
+			"isWall": false,
+			"mapInvert": false,
+			"mapThickness": 0.0,
+			"mapResolution": [30, 30, 20],
+			"targetAngleInDegree": [0, 0, 0],
+			"targetPosition": [-0.256, 1.4, 0.0]
+		},
+		{
+			"comment": "koifish_tail",
+			"geometryFile": "./data/models/koifish_tail.obj",
+			"density": 1100.0,
+			"translation": [0.065, 1.4, 0.0],
+			"rotationAxis": [0, 0, 1],
+			"rotationAngle": 0,
+			"scale": [0.2, 0.2, 0.2],
+			"velocity": [0.0, 0.0, 0.0],
+			"angularVelocity": [0.0, 0.0, 0.0],
+			"color": [0.8, 0.3, 0.2, 1.0],
+			"isDynamic": true,
+			"isWall": false,
+			"mapInvert": false,
+			"mapThickness": 0.0,
+			"mapResolution": [30, 30, 20],
+			"targetAngleInDegree": [0, 0, 0],
+			"targetPosition": [0.065, 1.4, 0.0]
+		}
+	],
+	"ArticulatedSystems": [
+		{
+			"rigidIndices": [0, 1],
+			"invStiffness": 0.0,
+			"joints": [
+				{
+					"rigidIndex1": 0,
+					"rigidIndex2": 1,
+					"jointType": "revolute",
+					"jointPoint": [0.0, 1.4, 0.0],
+					"parentAxisLocal": [0.0, 1.0, 0.0],
+					"childAxisLocal": [0.0, 1.0, 0.0]
+				}
+			]
+		}
+	]
+}

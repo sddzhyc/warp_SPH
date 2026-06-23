@@ -454,6 +454,8 @@ def enforce_boundary_3D_warp(
     padding: float,
     lower_x_wall_velocity: float,
     upper_x_wall_velocity: float,
+    lower_z_wall_velocity: float,
+    upper_z_wall_velocity: float,
 ):
     tid = wp.tid()
 
@@ -485,12 +487,16 @@ def enforce_boundary_3D_warp(
         pos = wp.vec3(pos[0], lower_bound[1] + padding, pos[2])
 
     # z axis
+    hit_upper_z = 0
     if pos[2] > upper_bound[2] - padding:
         collision_normal = collision_normal + wp.vec3(0.0, 0.0, -1.0)
         pos = wp.vec3(pos[0], pos[1], upper_bound[2] - padding)
+        hit_upper_z = 1
+    hit_lower_z = 0
     if pos[2] < lower_bound[2] + padding:
         collision_normal = collision_normal + wp.vec3(0.0, 0.0, 1.0)
         pos = wp.vec3(pos[0], pos[1], lower_bound[2] + padding)
+        hit_lower_z = 1
 
     # write back position
     particle_x[tid] = pos
@@ -512,6 +518,20 @@ def enforce_boundary_3D_warp(
                 tid,
                 n,
                 wp.vec3(upper_x_wall_velocity, 0.0, 0.0),
+            )
+        elif hit_lower_z == 1:
+            simulate_collisions_warp_with_wall_velocity(
+                particle_v,
+                tid,
+                n,
+                wp.vec3(0.0, 0.0, lower_z_wall_velocity),
+            )
+        elif hit_upper_z == 1:
+            simulate_collisions_warp_with_wall_velocity(
+                particle_v,
+                tid,
+                n,
+                wp.vec3(0.0, 0.0, upper_z_wall_velocity),
             )
         else:
             simulate_collisions_warp(particle_v, tid, n)

@@ -1,5 +1,5 @@
 import time
-from SimSPH import SimSPH
+from SimSPH import SimSPH, apply_swim_bladder_buoyancy_kernel
 from rigid_fluid_coupling import MaterialMarks, MaterialType, RigidBodies, compute_moving_boundary_volume, compute_static_boundary_volume, solve_rigid_body_diff, update_rigid_particle_info_diff
 from joint_system import integrate_rigid_velocity_diff, integrate_rigid_pose_diff_inplace, solve_articulated_joints_impulse_inplace, compose_joint_velocity_from_delta
 from sim_utils import export_ply_points
@@ -39,7 +39,7 @@ def sum_grad_fluid(
 
 class SimSPH_diff(SimSPH):
 
-    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False, use_v_loss=False):
+    def __init__(self,config = None, container = None, stage_path="example_sph.usd", sim_steps=100, ply_path=None, lr=0.01, h_scale=1.0, use_custom_grad=False, use_norm_grad=False, use_diffFR=False, verbose=False, use_v_loss=False, no_pose_loss=False, use_x_loss=False, use_tail_periodic_loss=False, tail_periodic_freq=2.0, tail_periodic_amp=0.5, tail_periodic_weight=1.0, control_interval=1260, control_start_step=0):
         super().__init__(config, container, 0, stage_path, ply_path, h_scale)
         self.ply_path = ply_path
         self.sim_steps = sim_steps
@@ -48,8 +48,16 @@ class SimSPH_diff(SimSPH):
         self.use_norm_grad = use_norm_grad
         self.use_diffFR = use_diffFR
         self.use_v_loss = use_v_loss
+        self.no_pose_loss = no_pose_loss
+        self.use_x_loss = use_x_loss
+        self.use_tail_periodic_loss = use_tail_periodic_loss
+        self.tail_periodic_freq = tail_periodic_freq
+        self.tail_periodic_amp = tail_periodic_amp
+        self.tail_periodic_weight = tail_periodic_weight
+        self.control_interval = control_interval
+        self.control_start_step = control_start_step
         self.init_diff_phys(self.sim_steps)
-        self.init_diff_task() 
+        self.init_diff_task()
 
     def init_diff_phys(self, sim_steps):
         self.sim_steps = sim_steps
@@ -91,8 +99,12 @@ class SimSPH_diff(SimSPH):
 
         # No segment checkpoints or saved grads
 
-        # Loss
+        # Loss — total and per-component breakdown
         self.loss = wp.zeros((1,), dtype=float, requires_grad=True)
+        self.loss_pose = wp.zeros((1,), dtype=float, requires_grad=True)
+        self.loss_position = wp.zeros((1,), dtype=float, requires_grad=True)
+        self.loss_velocity = wp.zeros((1,), dtype=float, requires_grad=True)
+        self.loss_tail_periodic = wp.zeros((1,), dtype=float, requires_grad=True)
 
         self.tapes = [] # List of tapes for each step
         self.loss_tape = None # Tape for loss computation
@@ -114,7 +126,10 @@ class SimSPH_diff(SimSPH):
         self.rigid_torque_arrays = []
         self.rigid_inertia_arrays = []
         self.rigid_inv_inertia_arrays = []
-        
+
+        # 鱼鳔体积数组
+        self.swim_bladder_volume_arrays = []
+
         # No segment checkpoints or saved grads for rigid bodies
 
         if self.num_rigid_bodies > 0:
@@ -132,6 +147,7 @@ class SimSPH_diff(SimSPH):
                 self.rigid_torque_arrays.append(wp.zeros_like(self.rbs.rigid_torque, requires_grad=True))
                 self.rigid_inertia_arrays.append(wp.zeros_like(self.rbs.rigid_inertia, requires_grad=True))
                 self.rigid_inv_inertia_arrays.append(wp.zeros_like(self.rbs.rigid_inv_inertia, requires_grad=True))
+                self.swim_bladder_volume_arrays.append(wp.zeros(1, dtype=wp.float32, requires_grad=True))
 
             wp.copy(self.rigid_x_arrays[0], self.rbs.rigid_x)
             wp.copy(self.rigid_v_arrays[0], self.rbs.rigid_v)
@@ -143,6 +159,7 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_quaternion_arrays[0], self.rbs.rigid_quaternion)
             wp.copy(self.rigid_inertia_arrays[0], self.rbs.rigid_inertia)
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
+            wp.copy(self.swim_bladder_volume_arrays[0], self.swim_bladder_volume)
 
     def init_diff_task(self):
         # Initialize Task (which handles targets and optimizer)
@@ -161,7 +178,13 @@ class SimSPH_diff(SimSPH):
         elif scene_lower and ("fish_on_water_new" in scene_lower):
             print("Initializing FishTaskNew (body+tail joint fish) based on scene_file.")
             from tasks.fish_task_new import FishTaskNew
-            self.task = FishTaskNew(self, use_v_loss=self.use_v_loss)
+            self.task = FishTaskNew(self, use_v_loss=self.use_v_loss, no_pose_loss=self.no_pose_loss, use_x_loss=self.use_x_loss,
+                                     use_tail_periodic_loss=self.use_tail_periodic_loss,
+                                     tail_periodic_freq=self.tail_periodic_freq,
+                                     tail_periodic_amp=self.tail_periodic_amp,
+                                     tail_periodic_weight=self.tail_periodic_weight,
+                                     control_interval=self.control_interval,
+                                     control_start_step=self.control_start_step)
         elif scene_lower and ("fish_on_water" in scene_lower or "fish" in scene_lower):
             print("Initializing FishTask based on scene_file.")
             self.task = FishTask(self)
@@ -187,6 +210,10 @@ class SimSPH_diff(SimSPH):
 
         # 2. 清零 Loss：防止上一轮 Loss 累积
         self.loss.zero_()
+        self.loss_pose.zero_()
+        self.loss_position.zero_()
+        self.loss_velocity.zero_()
+        self.loss_tail_periodic.zero_()
         
         # 3. 清零优化变量（初始条件）的梯度
         # Call task-specific gradient clearing
@@ -221,7 +248,7 @@ class SimSPH_diff(SimSPH):
         wp.copy(self.x_arrays[0], self.x)
         wp.copy(self.v_arrays[0], self.v)
         wp.copy(self.rho_arrays[0], self.rho)
-        
+
         if self.num_rigid_bodies > 0:
             wp.copy(self.rigid_x_arrays[0], self.rbs.rigid_x)
             wp.copy(self.rigid_v_arrays[0], self.rbs.rigid_v)
@@ -235,6 +262,17 @@ class SimSPH_diff(SimSPH):
             wp.copy(self.rigid_torque_arrays[0], self.rbs.rigid_torque)
             wp.copy(self.rigid_inertia_arrays[0], self.rbs.rigid_inertia)
             wp.copy(self.rigid_inv_inertia_arrays[0], self.rbs.rigid_inv_inertia)
+
+            # Redirect rbs pointers back to t=0 arrays so any code reading
+            # rbs between reset() and the next step(0) sees correct data.
+            self.rbs.rigid_x = self.rigid_x_arrays[0]
+            self.rbs.rigid_v = self.rigid_v_arrays[0]
+            self.rbs.rigid_omega = self.rigid_omega_arrays[0]
+            self.rbs.rigid_quaternion = self.rigid_quaternion_arrays[0]
+            self.rbs.rigid_force = self.rigid_force_arrays[0]
+            self.rbs.rigid_torque = self.rigid_torque_arrays[0]
+            self.rbs.rigid_inertia = self.rigid_inertia_arrays[0]
+            self.rbs.rigid_inv_inertia = self.rigid_inv_inertia_arrays[0]
 
         for t in range(0, self.sim_steps + 1):
             if t < len(self.pressure_arrays):
@@ -284,6 +322,10 @@ class SimSPH_diff(SimSPH):
             self.rbs.rigid_torque = self.rigid_torque_arrays[0]
             self.rbs.rigid_inertia = self.rigid_inertia_arrays[0]
             self.rbs.rigid_inv_inertia = self.rigid_inv_inertia_arrays[0]
+
+            # Copy swim bladder volume
+            wp.copy(self.swim_bladder_volume_arrays[0], self.swim_bladder_volume_arrays[final_step])
+            wp.copy(self.swim_bladder_volume, self.swim_bladder_volume_arrays[0])
 
         # Clear transient per-step buffers so the next segment starts from a clean graph/state cache.
         for t in range(0, self.sim_steps + 1):
@@ -427,15 +469,15 @@ class SimSPH_diff(SimSPH):
                 # build grid
                 self.grid.build(x_in, self.grid_size)
 
-            lower_bound, upper_bound, lower_x_wall_velocity, upper_x_wall_velocity = self._get_wave_boundary_state()
-            
+            lower_bound, upper_bound, lower_x_wall_v, upper_x_wall_v, lower_z_wall_v, upper_z_wall_v = self._get_wave_boundary_state()
+
             # Substep (Physics Solver)
             self.sub_step(t)
-            
+
             # Common Post-Processing: Boundary Handling & Rigid Body Update
             x_out = self.x_arrays[t+1]
             v_out = self.v_arrays[t+1]
-            
+
             # Enforce boundary on t+1
             wp.launch(
                 kernel=enforce_boundary_3D_warp,
@@ -447,14 +489,55 @@ class SimSPH_diff(SimSPH):
                     wp.vec3(*lower_bound),
                     wp.vec3(*upper_bound),
                     self.padding,
-                    float(lower_x_wall_velocity),
-                    float(upper_x_wall_velocity),
+                    float(lower_x_wall_v),
+                    float(upper_x_wall_v),
+                    float(lower_z_wall_v),
+                    float(upper_z_wall_v),
                 ]
             )
-            
+
+            # 施加鱼鳔浮力（在刚体积分前）
+            if self.swim_bladder_enable and self.swim_bladder_body_id >= 0 and self.num_rigid_bodies > 0:
+                if current_tape is not None:
+                    with current_tape:
+                        wp.launch(
+                            kernel=apply_swim_bladder_buoyancy_kernel,
+                            dim=1,
+                            inputs=[
+                                self.swim_bladder_volume,
+                                self.swim_bladder_body_id,
+                                self.rigid_force_arrays[t],
+                                self.rigid_torque_arrays[t],
+                                self.rigid_x_arrays[t],
+                                self.rigid_quaternion_arrays[t],
+                                self.base_density,
+                                abs(self.gravity),
+                                self.swim_bladder_vertical_offset,
+                                self.swim_bladder_horizontal_offset,
+                            ],
+                        )
+                else:
+                    wp.launch(
+                        kernel=apply_swim_bladder_buoyancy_kernel,
+                        dim=1,
+                        inputs=[
+                            self.swim_bladder_volume,
+                            self.swim_bladder_body_id,
+                            self.rigid_force_arrays[t],
+                            self.rigid_torque_arrays[t],
+                            self.rigid_x_arrays[t],
+                            self.rigid_quaternion_arrays[t],
+                            self.base_density,
+                            abs(self.gravity),
+                            self.swim_bladder_vertical_offset,
+                            self.swim_bladder_horizontal_offset,
+                        ],
+                    )
+
             # Rigid Body Update (t -> t+1)
             if self.num_rigid_bodies > 0:
-                g = wp.vec3(0.0, self.gravity, 0.0)
+                self.additional_gravity = float(getattr(self, 'additional_gravity_init', 0.0))
+                g = wp.vec3(0.0, self.gravity + self.additional_gravity, 0.0)
 
                 if self.num_articulated_joints <= 0 or self.articulated_joints is None:
                     if current_tape is not None:
@@ -711,6 +794,10 @@ class SimSPH_diff(SimSPH):
                             self.rigid_omega_arrays[t+1],
                         ]
                     )
+
+            # 记录当前步的鱼鳔体积
+            if self.swim_bladder_enable and self.swim_bladder_body_id >= 0 and self.num_rigid_bodies > 0:
+                wp.copy(self.swim_bladder_volume_arrays[t+1], self.swim_bladder_volume)
 
             self.sim_time += self.frame_dt
 

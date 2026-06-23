@@ -469,7 +469,9 @@ class SimSPH_diff_with_segment(SimSPH):
                                 wp.vec3(*self.domain_end),
                                 self.padding,
                                 0.0,
-                            0.0,
+                                0.0,
+                                0.0,
+                                0.0,
                         ]
                     )
 
